@@ -17,6 +17,29 @@
 </head>
 <body class="dark-theme">
 
+  <!-- Login Screen Overlay -->
+  <div class="login-overlay active" id="login-overlay">
+    <div class="login-bg-glow"></div>
+    <div class="login-card">
+      <div class="login-icon-circle">
+        <i class="fa-solid fa-lock"></i>
+      </div>
+      <h2>Espace Sécurisé</h2>
+      <p>Veuillez saisir le code d'accès pour déverrouiller le coffre fort de Dr. Boukar Michel.</p>
+      <form id="login-form">
+        <div class="form-group">
+          <div class="password-input-container">
+            <i class="fa-solid fa-key input-key-icon"></i>
+            <input type="password" id="login-code" placeholder="Code d'accès" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full" id="btn-login-submit">
+          <i class="fa-solid fa-right-to-bracket"></i> Déverrouiller
+        </button>
+      </form>
+    </div>
+  </div>
+
   <!-- Application Container -->
   <div class="app-layout">
     

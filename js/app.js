@@ -87,15 +87,19 @@ const DOM = {
   detailCreatedAt: document.getElementById('detail-created-at'),
   btnDownloadOriginal: document.getElementById('btn-download-original'),
   detailFileViewer: document.getElementById('detail-file-viewer'),
-  
   // Toasts
-  toastContainer: document.getElementById('toast-container')
+  toastContainer: document.getElementById('toast-container'),
+
+  // Login Overlay
+  loginOverlay: document.getElementById('login-overlay'),
+  loginForm: document.getElementById('login-form'),
+  loginCode: document.getElementById('login-code')
 };
 
 // Initialisation au chargement de la page
 document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
-  loadDashboardData();
+  checkAuthentication();
 });
 
 // Toast System
@@ -123,6 +127,23 @@ function showToast(message, type = 'success') {
   }, 4000);
 }
 
+// Vérifier l'état de l'authentification
+function checkAuthentication() {
+  const token = sessionStorage.getItem('cardvault_token');
+  if (token) {
+    DOM.loginOverlay.classList.remove('active');
+    loadDashboardData();
+  } else {
+    DOM.loginOverlay.classList.add('active');
+  }
+}
+
+// Récupérer les en-têtes d'authentification
+function getAuthHeaders() {
+  const token = sessionStorage.getItem('cardvault_token');
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
 let apiTested = false;
 
 // Charger les cartes et tags depuis l'API ou LocalStorage
@@ -130,7 +151,8 @@ async function loadDashboardData() {
   if (!apiTested) {
     try {
       const response = await fetch(`${API_URL}/api/cards`);
-      if (response.ok) {
+      // Si la route répond 200 ou 401/403 (authentification requise), le serveur est bien présent
+      if (response.ok || response.status === 401 || response.status === 403) {
         state.useLocalStorage = false;
       } else {
         state.useLocalStorage = true;
@@ -158,12 +180,12 @@ async function loadDashboardData() {
       url += `?${params.join('&')}`;
     }
 
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: getAuthHeaders() });
     if (!response.ok) throw new Error('Impossible de charger les cartes.');
     state.cards = await response.json();
     
     // Charger aussi la liste complète des tags pour la sidebar
-    const tagsResponse = await fetch(`${API_URL}/api/tags`);
+    const tagsResponse = await fetch(`${API_URL}/api/tags`, { headers: getAuthHeaders() });
     if (tagsResponse.ok) {
       state.tags = await tagsResponse.json();
     }
@@ -417,6 +439,54 @@ function initEventListeners() {
       await deleteCard(state.currentCard.id);
     }
   });
+
+  // Soumission du code d'accès de connexion
+  DOM.loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = DOM.loginCode.value.trim();
+    
+    // Si on est en mode LocalStorage ou hors ligne (sans API fonctionnelle), on valide localement
+    if (state.useLocalStorage) {
+      if (code === 'Michel2026') {
+        sessionStorage.setItem('cardvault_token', 'Michel2026');
+        DOM.loginOverlay.classList.remove('active');
+        showToast("Accès déverrouillé !");
+        loadDashboardData();
+      } else {
+        showToast("Code d'accès incorrect.", "error");
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        sessionStorage.setItem('cardvault_token', data.token);
+        DOM.loginOverlay.classList.remove('active');
+        showToast("Accès déverrouillé !");
+        loadDashboardData();
+      } else {
+        showToast("Code d'accès incorrect.", "error");
+      }
+    } catch (err) {
+      // Fallback local en cas d'erreur de connexion réseau sur l'API login
+      if (code === 'Michel2026') {
+        sessionStorage.setItem('cardvault_token', 'Michel2026');
+        state.useLocalStorage = true;
+        DOM.loginOverlay.classList.remove('active');
+        showToast("Mode hors-ligne activé.", "info");
+        loadDashboardData();
+      } else {
+        showToast("Erreur de connexion et code incorrect.", "error");
+      }
+    }
+  });
 }
 
 // Gérer l'ouverture du modal de création
@@ -591,12 +661,14 @@ async function saveCard() {
     if (isEdit) {
       response = await fetch(`${API_URL}/api/cards/${cardId}`, {
         method: 'PUT',
-        body: formData
+        body: formData,
+        headers: getAuthHeaders()
       });
     } else {
       response = await fetch(`${API_URL}/api/cards`, {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: getAuthHeaders()
       });
     }
 
@@ -839,7 +911,8 @@ async function deleteCard(id) {
 
   try {
     const response = await fetch(`${API_URL}/api/cards/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: getAuthHeaders()
     });
     
     if (!response.ok) throw new Error("Erreur de suppression.");

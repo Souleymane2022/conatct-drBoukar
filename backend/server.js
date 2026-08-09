@@ -12,6 +12,35 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Configuration de la sécurité par code d'accès
+const ACCESS_CODE = process.env.ACCESS_CODE || 'Michel2026';
+
+function checkAuth(req, res, next) {
+  // Autoriser la route de connexion sans token
+  if (req.path === '/login') {
+    return next();
+  }
+  
+  const authHeader = req.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${ACCESS_CODE}`) {
+    return res.status(401).json({ error: 'Accès refusé. Code incorrect ou expiré.' });
+  }
+  next();
+}
+
+// Appliquer la vérification sur toutes les routes de l'API
+app.use('/api', checkAuth);
+
+// Route de connexion
+app.post('/api/login', (req, res) => {
+  const { code } = req.body;
+  if (code === ACCESS_CODE) {
+    res.json({ success: true, token: ACCESS_CODE });
+  } else {
+    res.status(401).json({ error: 'Code d\'accès incorrect.' });
+  }
+});
+
 // Définir les dossiers
 const uploadsDir = path.join(__dirname, 'uploads');
 const frontendDir = path.join(__dirname, '..');
