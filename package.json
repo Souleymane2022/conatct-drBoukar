@@ -1,0 +1,17 @@
+{
+  "name": "business-card-vault",
+  "version": "1.0.0",
+  "description": "Système de stockage et d'extraction de cartes de visite de Boukar Michel",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "sqlite3": "^5.1.7"
+  },
+  "author": "Antigravity",
+  "license": "ISC"
+}

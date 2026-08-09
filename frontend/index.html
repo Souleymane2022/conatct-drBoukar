@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coffre à Cartes de Visite - Boukar Michel</title>
+  <meta name="description" content="Gestionnaire intelligent et local de cartes de visite de Boukar Michel avec OCR automatique.">
+  
+  <!-- Polices & Icônes -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Styles principaux -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="dark-theme">
+
+  <!-- Application Container -->
+  <div class="app-layout">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo-area">
+        <i class="fa-solid fa-address-card logo-icon"></i>
+        <div class="logo-text">
+          <h1>CardVault</h1>
+          <span>Boukar Michel</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-btn active" id="nav-all">
+          <i class="fa-solid fa-list-ul"></i> Toutes les cartes
+        </button>
+        <button class="nav-btn accent-btn" id="btn-open-upload">
+          <i class="fa-solid fa-circle-plus"></i> Ajouter une carte
+        </button>
+      </nav>
+
+      <div class="tags-section">
+        <h3><i class="fa-solid fa-tags"></i> Filtrer par Tags</h3>
+        <div class="tags-list" id="sidebar-tags">
+          <!-- Les tags seront injectés dynamiquement ici -->
+          <div class="tag-skeleton"></div>
+          <div class="tag-skeleton"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <p><i class="fa-solid fa-shield-halved"></i> Stockage local sécurisé</p>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+      <!-- Top Bar -->
+      <header class="top-bar">
+        <div class="search-container">
+          <i class="fa-solid fa-magnifying-glass search-icon"></i>
+          <input type="text" id="search-input" placeholder="Rechercher par nom, entreprise, email, téléphone...">
+          <button class="clear-btn" id="clear-search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="stats-badge">
+          <i class="fa-solid fa-database"></i> <span id="cards-count">0</span> carte(s)
+        </div>
+      </header>
+
+      <!-- Dashboard View -->
+      <section class="dashboard-view" id="dashboard-view">
+        <div class="view-header">
+          <h2 id="view-title">Toutes les cartes</h2>
+          <div class="view-controls">
+            <span class="active-tag-filter" id="active-tag-indicator" style="display: none;">
+              Tag: <span id="active-tag-name"></span>
+              <i class="fa-solid fa-xmark" id="btn-clear-tag"></i>
+            </span>
+          </div>
+        </div>
+
+        <!-- Cards Grid Container -->
+        <div class="cards-grid" id="cards-grid">
+          <!-- Les cartes de visite seront injectées ici -->
+        </div>
+
+        <!-- Empty State -->
+        <div class="empty-state" id="empty-state" style="display: none;">
+          <div class="empty-icon"><i class="fa-solid fa-box-open"></i></div>
+          <h3>Aucune carte de visite</h3>
+          <p>Aucune carte ne correspond à votre recherche ou la base de données est vide.</p>
+          <button class="btn btn-primary" id="btn-empty-add"><i class="fa-solid fa-plus"></i> Ajouter votre première carte</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Upload & OCR Processing Drawer/Modal -->
+  <div class="modal-overlay" id="upload-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-circle-plus"></i> Ajouter une carte de visite</h2>
+        <button class="close-btn" id="btn-close-upload"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      
+      <div class="modal-body">
+        <!-- Step 1: Upload Dropzone & Text Copy-Paste -->
+        <div id="step-upload" class="upload-step active">
+          <div class="upload-options">
+            <div class="drop-zone" id="drop-zone">
+              <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
+              <h3>Glissez-déposez un fichier ici</h3>
+              <p>Formats supportés : <strong>IMG (PNG, JPG)</strong> ou <strong>PDF</strong></p>
+              <span>ou</span>
+              <label for="file-input" class="btn btn-outline">Parcourir les fichiers</label>
+              <input type="file" id="file-input" accept="image/*,application/pdf" style="display: none;">
+            </div>
+            
+            <div class="text-input-section">
+              <div class="divider"><span>OU</span></div>
+              <h3><i class="fa-solid fa-paste"></i> Coller du texte brut</h3>
+              <p class="subtitle">Copiez-collez les coordonnées brutes (depuis un e-mail ou document)</p>
+              <textarea id="raw-text-input" placeholder="Exemple :&#10;Boukar Michel&#10;Directeur Général - TechnoSolutions&#10;Tél: +237 600 000 000&#10;Email: michel.boukar@technosolutions.com&#10;Site: www.technosolutions.com"></textarea>
+              <button class="btn btn-outline btn-full" id="btn-process-text"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyser le texte</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: OCR Extraction Progress -->
+        <div id="step-ocr-progress" class="upload-step">
+          <div class="ocr-progress-content">
+            <div class="spinner"></div>
+            <h3 id="ocr-status-text">Reconnaissance de texte locale en cours...</h3>
+            <p>Tesseract.js extrait les données directement sur votre machine.</p>
+            <div class="progress-bar-container">
+              <div class="progress-bar-fill" id="ocr-progress-fill"></div>
+            </div>
+            <span class="progress-percent" id="ocr-progress-percent">0%</span>
+          </div>
+        </div>
+
+        <!-- Step 3: Review and Edit Form (Side by Side) -->
+        <div id="step-review" class="upload-step">
+          <div class="review-layout">
+            <!-- Left Panel: Original Document / Raw Text Preview -->
+            <div class="review-preview-panel">
+              <h3><i class="fa-solid fa-file-invoice"></i> Document d'origine</h3>
+              <div class="preview-container" id="document-preview-container">
+                <!-- Image or PDF canvas will render here -->
+              </div>
+              <div class="raw-text-log">
+                <h4><i class="fa-solid fa-code"></i> Texte brut extrait par l'OCR</h4>
+                <textarea id="review-raw-text" readonly></textarea>
+              </div>
+            </div>
+
+            <!-- Right Panel: Form Fields -->
+            <div class="review-form-panel">
+              <h3><i class="fa-solid fa-user-pen"></i> Vérifier et corriger</h3>
+              <form id="card-form">
+                <input type="hidden" id="form-card-id">
+                
+                <div class="form-group">
+                  <label for="form-name"><i class="fa-solid fa-user"></i> Nom complet *</label>
+                  <input type="text" id="form-name" required placeholder="Ex: Boukar Michel">
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="form-company"><i class="fa-solid fa-building"></i> Entreprise</label>
+                    <input type="text" id="form-company" placeholder="Ex: TechnoSolutions">
+                  </div>
+                  <div class="form-group">
+                    <label for="form-job"><i class="fa-solid fa-briefcase"></i> Poste / Fonction</label>
+                    <input type="text" id="form-job" placeholder="Ex: Directeur Général">
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="form-phone"><i class="fa-solid fa-phone"></i> Téléphone</label>
+                    <input type="text" id="form-phone" placeholder="Ex: +237 600 000 000">
+                  </div>
+                  <div class="form-group">
+                    <label for="form-email"><i class="fa-solid fa-envelope"></i> Email</label>
+                    <input type="email" id="form-email" placeholder="Ex: michel.boukar@technosolutions.com">
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="form-website"><i class="fa-solid fa-globe"></i> Site Web</label>
+                  <input type="text" id="form-website" placeholder="Ex: www.technosolutions.com">
+                </div>
+
+                <div class="form-group">
+                  <label for="form-address"><i class="fa-solid fa-location-dot"></i> Adresse</label>
+                  <input type="text" id="form-address" placeholder="Ex: Bastos, Yaoundé, Cameroun">
+                </div>
+
+                <div class="form-group">
+                  <label for="form-tags"><i class="fa-solid fa-tags"></i> Tags (séparés par des virgules)</label>
+                  <input type="text" id="form-tags" placeholder="Ex: Clients, VIP, Partenaires">
+                </div>
+
+                <div class="form-actions">
+                  <button type="button" class="btn btn-outline" id="btn-back-upload">Recommencer</button>
+                  <button type="submit" class="btn btn-primary" id="btn-save-card"><i class="fa-solid fa-floppy-disk"></i> Enregistrer la carte</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail & View Card Drawer -->
+  <div class="modal-overlay" id="detail-modal">
+    <div class="modal-card detail-card-modal">
+      <div class="modal-header">
+        <h2 id="detail-modal-title"><i class="fa-solid fa-address-card"></i> Détails du contact</h2>
+        <div class="header-actions">
+          <button class="btn btn-icon btn-edit" id="btn-edit-card" title="Modifier la carte"><i class="fa-solid fa-pen-to-square"></i></button>
+          <button class="btn btn-icon btn-delete" id="btn-delete-card" title="Supprimer la carte"><i class="fa-solid fa-trash-can"></i></button>
+          <button class="close-btn" id="btn-close-detail"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="detail-layout">
+          <!-- Info Details Panel -->
+          <div class="detail-info-panel">
+            <div class="contact-header">
+              <div class="avatar-placeholder" id="detail-avatar-init">BM</div>
+              <div>
+                <h3 id="detail-name">Nom de la personne</h3>
+                <p id="detail-job-company">Poste @ Entreprise</p>
+              </div>
+            </div>
+
+            <div class="contact-details-list">
+              <div class="detail-item" id="detail-phone-row">
+                <div class="detail-icon"><i class="fa-solid fa-phone"></i></div>
+                <div class="detail-content">
+                  <span class="label">Téléphone</span>
+                  <a href="#" id="detail-phone" class="value">Non renseigné</a>
+                </div>
+              </div>
+
+              <div class="detail-item" id="detail-email-row">
+                <div class="detail-icon"><i class="fa-solid fa-envelope"></i></div>
+                <div class="detail-content">
+                  <span class="label">Email</span>
+                  <a href="#" id="detail-email" class="value">Non renseigné</a>
+                </div>
+              </div>
+
+              <div class="detail-item" id="detail-website-row">
+                <div class="detail-icon"><i class="fa-solid fa-globe"></i></div>
+                <div class="detail-content">
+                  <span class="label">Site Web</span>
+                  <a href="#" id="detail-website" target="_blank" class="value">Non renseigné</a>
+                </div>
+              </div>
+
+              <div class="detail-item" id="detail-address-row">
+                <div class="detail-icon"><i class="fa-solid fa-location-dot"></i></div>
+                <div class="detail-content">
+                  <span class="label">Adresse</span>
+                  <span id="detail-address" class="value">Non renseigné</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-tags-section">
+              <span class="label">Tags associés</span>
+              <div class="tags-row" id="detail-tags">
+                <!-- Tags injectés -->
+              </div>
+            </div>
+
+            <div class="detail-date">
+              Ajouté le <span id="detail-created-at">--/--/----</span>
+            </div>
+          </div>
+
+          <!-- Document Viewer Panel -->
+          <div class="detail-viewer-panel">
+            <div class="viewer-header">
+              <h3><i class="fa-solid fa-image"></i> Document Original</h3>
+              <a href="#" id="btn-download-original" class="btn btn-outline btn-sm" download><i class="fa-solid fa-download"></i> Télécharger</a>
+            </div>
+            <div class="viewer-body" id="detail-file-viewer">
+              <!-- Visualisation de l'image ou du PDF -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- CDNs Tesseract et PDFJS -->
+  <script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+
+  <!-- Moteur OCR et application scripts -->
+  <script src="js/ocr.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
