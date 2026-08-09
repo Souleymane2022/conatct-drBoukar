@@ -16,7 +16,7 @@ app.use(express.json());
 const uploadsDir = path.join(__dirname, 'uploads');
 const frontendDir = path.join(__dirname, '..');
 
-// S'assurer que le dossier uploads existe
+// S'assurer que le dossier uploads existe (uniquement utile en local)
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -26,12 +26,14 @@ app.use(express.static(frontendDir));
 app.use('/uploads', express.static(uploadsDir));
 
 // Configuration de Multer pour le stockage des fichiers originaux (Image / PDF)
+// Sur Vercel, le dossier de travail est en lecture seule, excepté le dossier temporaire /tmp
+const tempUploadDir = process.env.POSTGRES_URL || process.env.DATABASE_URL ? '/tmp' : uploadsDir;
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    cb(null, tempUploadDir);
   },
   filename: (req, file, cb) => {
-    // Remplacer les caractères bizarres et ajouter le timestamp
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
     const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9]/g, '_');
@@ -108,9 +110,25 @@ app.post('/api/cards', upload.single('file'), async (req, res) => {
     };
 
     if (req.file) {
-      // Stocker le chemin relatif pour l'accès web
-      cardData.file_path = `/uploads/${req.file.filename}`;
-      cardData.file_type = req.file.mimetype;
+      const isPostgres = !!(process.env.POSTGRES_URL || process.env.DATABASE_URL);
+      if (isPostgres) {
+        // Mode Postgres (Vercel) : lire le fichier temporaire, le convertir en Base64 et le supprimer
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64 = fileBuffer.toString('base64');
+        cardData.file_path = `data:${req.file.mimetype};base64,${base64}`;
+        cardData.file_type = req.file.mimetype;
+        
+        // Nettoyage immédiat du fichier temporaire sur le disque
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkErr) {
+          console.warn("Impossible de supprimer le fichier temporaire:", unlinkErr.message);
+        }
+      } else {
+        // Mode SQLite local : stocker le chemin relatif local
+        cardData.file_path = `/uploads/${req.file.filename}`;
+        cardData.file_type = req.file.mimetype;
+      }
     } else {
       cardData.file_path = '';
       cardData.file_type = '';
@@ -151,15 +169,32 @@ app.put('/api/cards/:id', upload.single('file'), async (req, res) => {
 
     // Si un nouveau fichier est téléversé
     if (req.file) {
-      // Supprimer l'ancien fichier s'il existe
-      if (existingCard.file_path) {
+      // Supprimer l'ancien fichier s'il existait localement (pas de suppression si base64)
+      if (existingCard.file_path && !existingCard.file_path.startsWith('data:')) {
         const oldPath = path.join(__dirname, '..', existingCard.file_path);
         if (fs.existsSync(oldPath)) {
           fs.unlinkSync(oldPath);
         }
       }
-      cardData.file_path = `/uploads/${req.file.filename}`;
-      cardData.file_type = req.file.mimetype;
+
+      const isPostgres = !!(process.env.POSTGRES_URL || process.env.DATABASE_URL);
+      if (isPostgres) {
+        // Mode Postgres (Vercel) : conversion Base64
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64 = fileBuffer.toString('base64');
+        cardData.file_path = `data:${req.file.mimetype};base64,${base64}`;
+        cardData.file_type = req.file.mimetype;
+        
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (unlinkErr) {
+          console.warn("Impossible de supprimer le fichier temporaire:", unlinkErr.message);
+        }
+      } else {
+        // Mode SQLite local : stockage fichier local
+        cardData.file_path = `/uploads/${req.file.filename}`;
+        cardData.file_type = req.file.mimetype;
+      }
     }
 
     await db.updateCard(cardId, cardData);
@@ -181,8 +216,8 @@ app.delete('/api/cards/:id', async (req, res) => {
       return res.status(404).json({ error: 'Carte de visite introuvable' });
     }
 
-    // Supprimer le fichier d'origine de uploads s'il y en a un
-    if (card.file_path) {
+    // Supprimer le fichier d'origine s'il existait localement (pas de suppression si base64)
+    if (card.file_path && !card.file_path.startsWith('data:')) {
       const filePath = path.join(__dirname, '..', card.file_path);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
