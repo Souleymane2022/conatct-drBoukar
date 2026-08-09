@@ -123,8 +123,31 @@ function showToast(message, type = 'success') {
   }, 4000);
 }
 
-// Charger les cartes et tags depuis l'API
+let apiTested = false;
+
+// Charger les cartes et tags depuis l'API ou LocalStorage
 async function loadDashboardData() {
+  if (!apiTested) {
+    try {
+      const response = await fetch(`${API_URL}/api/cards`);
+      if (response.ok) {
+        state.useLocalStorage = false;
+      } else {
+        state.useLocalStorage = true;
+        showToast("Mode Statique détecté : Vos données seront sauvegardées dans votre navigateur.", "info");
+      }
+    } catch (e) {
+      state.useLocalStorage = true;
+      showToast("Mode Statique détecté : Vos données seront sauvegardées dans votre navigateur.", "info");
+    }
+    apiTested = true;
+  }
+
+  if (state.useLocalStorage) {
+    loadDashboardFromLocalStorage();
+    return;
+  }
+
   try {
     let url = `${API_URL}/api/cards`;
     const params = [];
@@ -151,6 +174,48 @@ async function loadDashboardData() {
     console.error(error);
     showToast("Erreur de chargement des données.", 'error');
   }
+}
+
+// Fonction de chargement locale (Fallback pour Vercel/hors-ligne)
+function loadDashboardFromLocalStorage() {
+  const storedCards = localStorage.getItem('cardvault_cards');
+  let cards = storedCards ? JSON.parse(storedCards) : [];
+  
+  if (state.searchQuery) {
+    const q = state.searchQuery.toLowerCase();
+    cards = cards.filter(c => 
+      (c.name && c.name.toLowerCase().includes(q)) ||
+      (c.company && c.company.toLowerCase().includes(q)) ||
+      (c.job_title && c.job_title.toLowerCase().includes(q)) ||
+      (c.email && c.email.toLowerCase().includes(q)) ||
+      (c.phone && c.phone.toLowerCase().includes(q)) ||
+      (c.raw_text && c.raw_text.toLowerCase().includes(q))
+    );
+  }
+  
+  if (state.selectedTag) {
+    cards = cards.filter(c => {
+      if (!c.tags) return false;
+      return c.tags.split(',').map(t => t.trim().toLowerCase()).includes(state.selectedTag.toLowerCase());
+    });
+  }
+  
+  state.cards = cards;
+  
+  const allCards = storedCards ? JSON.parse(storedCards) : [];
+  const tagSet = new Set();
+  allCards.forEach(c => {
+    if (c.tags) {
+      c.tags.split(',').forEach(tag => {
+        const cleaned = tag.trim();
+        if (cleaned) tagSet.add(cleaned);
+      });
+    }
+  });
+  state.tags = Array.from(tagSet);
+  
+  renderDashboard();
+  renderSidebarTags();
 }
 
 // Rendu des cartes de visite sur le tableau de bord
@@ -498,11 +563,15 @@ function updateOcrProgress(status, progress) {
 
 // Enregistrer la carte (Appel POST / PUT de l'API)
 async function saveCard() {
+  if (state.useLocalStorage) {
+    await saveCardToLocalStorage();
+    return;
+  }
+
   try {
     const isEdit = !!DOM.formCardId.value;
     const cardId = DOM.formCardId.value;
     
-    // Création du FormData pour envoyer les données textuelles et le fichier joint
     const formData = new FormData();
     formData.append('name', DOM.formName.value.trim());
     formData.append('company', DOM.formCompany.value.trim());
@@ -514,7 +583,6 @@ async function saveCard() {
     formData.append('tags', DOM.formTags.value.trim());
     formData.append('raw_text', DOM.reviewRawText.value);
 
-    // Ajouter le fichier d'origine s'il y en a un de nouveau
     if (state.uploadedFile) {
       formData.append('file', state.uploadedFile);
     }
@@ -538,17 +606,78 @@ async function saveCard() {
     showToast(isEdit ? "Carte de visite modifiée avec succès." : "Carte de visite ajoutée avec succès !");
     
     closeUploadModal();
-    
-    // Recharger les données du dashboard
     await loadDashboardData();
     
-    // Si on éditait la carte actuellement ouverte, mettre à jour le tiroir de détails
     if (isEdit && state.currentCard && state.currentCard.id == cardId) {
       openDetailModal(savedCard);
     }
   } catch (error) {
     console.error(error);
     showToast(error.message || "Échec de l'enregistrement de la carte.", "error");
+  }
+}
+
+// Sauvegarde locale (Vercel / Hors-ligne)
+async function saveCardToLocalStorage() {
+  const isEdit = !!DOM.formCardId.value;
+  const cardId = DOM.formCardId.value;
+  
+  const storedCards = localStorage.getItem('cardvault_cards');
+  let cards = storedCards ? JSON.parse(storedCards) : [];
+  
+  let fileData = '';
+  let fileType = '';
+  
+  if (state.uploadedFile) {
+    fileType = state.uploadedFile.type;
+    if (state.uploadedFile.type.startsWith('image/')) {
+      try {
+        fileData = await fileToBase64(state.uploadedFile);
+      } catch (err) {
+        console.error("Impossible de convertir le fichier en Base64:", err);
+      }
+    } else {
+      showToast("Les fichiers PDF ne sont pas stockés dans le stockage local du navigateur.", "info");
+    }
+  } else if (isEdit) {
+    // Garder l'ancien fichier s'il existait
+    const oldCard = cards.find(c => c.id == cardId);
+    if (oldCard) {
+      fileData = oldCard.file_path;
+      fileType = oldCard.file_type;
+    }
+  }
+
+  const cardData = {
+    id: isEdit ? parseInt(cardId) : Date.now(),
+    name: DOM.formName.value.trim(),
+    company: DOM.formCompany.value.trim(),
+    job_title: DOM.formJob.value.trim(),
+    phone: DOM.formPhone.value.trim(),
+    email: DOM.formEmail.value.trim(),
+    website: DOM.formWebsite.value.trim(),
+    address: DOM.formAddress.value.trim(),
+    tags: DOM.formTags.value.trim(),
+    raw_text: DOM.reviewRawText.value,
+    file_path: fileData,
+    file_type: fileType,
+    created_at: isEdit ? (cards.find(c => c.id == cardId)?.created_at || new Date().toISOString()) : new Date().toISOString()
+  };
+
+  if (isEdit) {
+    cards = cards.map(c => c.id == cardId ? cardData : c);
+  } else {
+    cards.unshift(cardData);
+  }
+  
+  localStorage.setItem('cardvault_cards', JSON.stringify(cards));
+  showToast(isEdit ? "Carte de visite modifiée localement." : "Carte de visite ajoutée localement !");
+  
+  closeUploadModal();
+  loadDashboardFromLocalStorage();
+  
+  if (isEdit && state.currentCard && state.currentCard.id == cardId) {
+    openDetailModal(cardData);
   }
 }
 
@@ -694,6 +823,20 @@ function openEditMode(card) {
 
 // Supprimer une carte de visite
 async function deleteCard(id) {
+  if (state.useLocalStorage) {
+    const storedCards = localStorage.getItem('cardvault_cards');
+    if (storedCards) {
+      let cards = JSON.parse(storedCards);
+      cards = cards.filter(c => c.id != id);
+      localStorage.setItem('cardvault_cards', JSON.stringify(cards));
+    }
+    showToast("La carte de visite a été supprimée localement.");
+    DOM.detailModal.classList.remove('active');
+    state.currentCard = null;
+    loadDashboardFromLocalStorage();
+    return;
+  }
+
   try {
     const response = await fetch(`${API_URL}/api/cards/${id}`, {
       method: 'DELETE'
@@ -721,5 +864,19 @@ function escapeHTML(str) {
 }
 
 function getFileExt(filename) {
+  if (filename.startsWith('data:')) {
+    const mime = filename.split(';')[0].split(':')[1];
+    return mime === 'application/pdf' ? '.pdf' : '.png';
+  }
   return filename.substring(filename.lastIndexOf('.'));
+}
+
+// Convertir un fichier en chaine Base64 pour le LocalStorage
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+  });
 }

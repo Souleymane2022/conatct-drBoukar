@@ -14,7 +14,7 @@ app.use(express.json());
 
 // Définir les dossiers
 const uploadsDir = path.join(__dirname, 'uploads');
-const frontendDir = path.join(__dirname, '..', 'frontend');
+const frontendDir = path.join(__dirname, '..');
 
 // S'assurer que le dossier uploads existe
 if (!fs.existsSync(uploadsDir)) {
