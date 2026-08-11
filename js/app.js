@@ -531,10 +531,10 @@ async function handleFileInput(file) {
   let fileToProcess = file;
 
   if (isImage) {
-    updateOcrProgress("Optimisation de l'image...", 0.05);
+    updateOcrProgress("Optimisation de l'image pour mobile...", 0.05);
     try {
-      // Compresser l'image à 1200px max de large pour éviter la limite Vercel de 4.5MB
-      fileToProcess = await compressImage(file);
+      // Compresser à 800px max de large pour un téléversement ultra-rapide sur mobile
+      fileToProcess = await compressImage(file, 800, 0.7);
       console.log(`Image optimisée. Taille originale: ${(file.size / 1024 / 1024).toFixed(2)}MB, Nouvelle taille: ${(fileToProcess.size / 1024 / 1024).toFixed(2)}MB`);
     } catch (compressErr) {
       console.warn("Échec de compression, utilisation de l'original:", compressErr);
