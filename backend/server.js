@@ -249,8 +249,9 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
     // Tenter de récupérer la liste des modèles disponibles pour aider au débogage
     let availableModels = [];
     try {
-      if (apiKey) {
-        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+      const activeKey = process.env.GEMINI_API_KEY;
+      if (activeKey) {
+        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${activeKey}`;
         const listRes = await fetch(listUrl);
         if (listRes.ok) {
           const listData = await listRes.json();
