@@ -84,6 +84,23 @@ const upload = multer({
   }
 });
 
+// Initialisation asynchrone de la base de données (Sécurité pour le mode Serverless Vercel)
+const dbInitPromise = db.initDb()
+  .catch(err => {
+    console.error("Erreur fatale lors de l'initialisation de la base de données :", err.message);
+    throw err;
+  });
+
+// Middleware pour attendre la connexion à la base de données sur chaque requête
+app.use(async (req, res, next) => {
+  try {
+    await dbInitPromise;
+    next();
+  } catch (err) {
+    res.status(500).json({ error: "La base de données n'est pas initialisée : " + err.message });
+  }
+});
+
 // API Routes
 
 // Récupérer toutes les cartes
@@ -421,15 +438,12 @@ app.delete('/api/cards/:id', async (req, res) => {
   }
 });
 
-// Démarrage de l'application
-db.initDb()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Le serveur tourne sur http://localhost:${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('Impossible de démarrer l\'application en raison d\'une erreur de base de données:', err.message);
+// Démarrage de l'application (écoute locale uniquement si hors Vercel)
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Le serveur tourne localement sur http://localhost:${PORT}`);
   });
+}
 
-// Déclencheur de build Vercel pour la mise à jour des clés API.
+// Exporter l'application Express pour le mode Serverless de Vercel
+module.exports = app;
