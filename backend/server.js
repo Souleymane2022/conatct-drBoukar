@@ -198,28 +198,53 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
       }
     };
 
-    const geminiResponse = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    // Liste des modèles et versions d'API à essayer par ordre de préférence
+    const modelsToTry = [
+      { name: 'gemini-2.5-flash', version: 'v1beta' },
+      { name: 'gemini-1.5-flash-latest', version: 'v1beta' },
+      { name: 'gemini-1.5-flash', version: 'v1' },
+      { name: 'gemini-1.5-flash', version: 'v1beta' }
+    ];
 
-    if (!geminiResponse.ok) {
-      const errText = await geminiResponse.text();
-      throw new Error(`Erreur API Gemini: ${geminiResponse.statusText} - ${errText}`);
+    let lastError = null;
+    let extractedData = null;
+
+    for (const model of modelsToTry) {
+      try {
+        console.log(`Tentative d'analyse avec le modèle: ${model.name} (${model.version})...`);
+        const geminiUrl = `https://generativelanguage.googleapis.com/${model.version}/models/${model.name}:generateContent?key=${apiKey}`;
+        
+        const geminiResponse = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+
+        if (geminiResponse.ok) {
+          const responseData = await geminiResponse.json();
+          const responseText = responseData.candidates[0].content.parts[0].text;
+          extractedData = JSON.parse(responseText);
+          console.log(`Analyse réussie avec le modèle: ${model.name} !`);
+          break; // Modèle fonctionnel trouvé, arrêt de la recherche
+        } else {
+          const errText = await geminiResponse.text();
+          lastError = new Error(`Modèle ${model.name} (${model.version}) non disponible: ${geminiResponse.statusText} - ${errText}`);
+          console.warn(lastError.message);
+        }
+      } catch (innerErr) {
+        lastError = innerErr;
+        console.warn(`Erreur de connexion avec le modèle ${model.name}:`, innerErr.message);
+      }
     }
 
-    const responseData = await geminiResponse.json();
-    const responseText = responseData.candidates[0].content.parts[0].text;
-    
-    // Parser le JSON retourné par Gemini
-    const extractedData = JSON.parse(responseText);
+    if (!extractedData) {
+      throw lastError || new Error("Aucun modèle Gemini configuré n'est accessible avec cette clé API.");
+    }
     
     res.json({ useFallback: false, data: extractedData });
 
   } catch (err) {
-    console.error("Erreur lors de l'analyse avec Gemini:", err.message);
-    // En cas d'erreur de l'API Gemini, on répond au client qu'il peut faire un fallback Tesseract
+    console.error("Erreur globale lors de l'analyse avec Gemini:", err.message);
     res.json({ useFallback: true, error: err.message });
   }
 });
