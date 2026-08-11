@@ -198,10 +198,14 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
       }
     };
 
-    // Liste des modèles supportés sur votre projet
+    // Liste élargie des modèles à essayer par ordre de préférence
     const modelsToTry = [
+      { name: 'gemini-2.0-flash', version: 'v1beta' },
+      { name: 'gemini-1.5-flash', version: 'v1' },
+      { name: 'gemini-1.5-flash', version: 'v1beta' },
       { name: 'gemini-2.5-flash', version: 'v1beta' },
-      { name: 'gemini-2.5-pro', version: 'v1beta' }
+      { name: 'gemini-2.5-pro', version: 'v1beta' },
+      { name: 'gemini-1.5-flash-latest', version: 'v1beta' }
     ];
 
     let modelErrors = [];
