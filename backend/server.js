@@ -153,18 +153,31 @@ app.post('/api/cards/analyze', upload.single('file'), async (req, res) => {
     // Préparer la requête pour Gemini API (utilisation de fetch)
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
     
-    const prompt = `Tu es un assistant spécialisé dans la numérisation de cartes de visite. Analyse cette image de carte de visite (ou PDF) et extrais les informations suivantes sous forme d'un objet JSON brut avec les clés exactes suivantes :
-- name (le nom complet de la personne)
-- company (le nom de l'entreprise)
-- job_title (le poste ou fonction)
-- phone (le numéro de téléphone au format propre, ex: +237 6XX XX XX XX)
-- email (l'adresse email)
-- website (le site internet)
-- address (l'adresse physique)
-- tags (propose des tags appropriés basés sur l'activité ou l'entreprise, ex: 'Partenaire', 'Médecin', 'Technologie')
-- raw_text (le texte complet brut lu sur la carte)
+    const prompt = `Tu es un assistant expert en numérisation de cartes de visite et en enrichissement de données.
+Analyse cette image de carte de visite (ou document PDF) et extrais ou déduis intelligemment toutes les informations possibles. 
+Si des informations ne sont pas écrites explicitement mais peuvent être devinées ou déduites logiquement de manière fiable, tu DOIS les remplir (ne laisse pas les champs vides si une valeur peut être déduite).
 
-Renvoie uniquement le JSON. Ne mets pas de balises de code markdown comme \`\`\`json.`;
+Consignes de déduction intelligentes :
+1. Si le site internet (website) est manquant mais que la personne a un e-mail professionnel (ex: contact@entreprise.com), déduis le site internet (ex: www.entreprise.com).
+2. Si le nom de l'entreprise (company) n'est pas écrit explicitement mais qu'un logo ou le nom de domaine de l'e-mail ou du site est présent, déduis le nom de l'entreprise.
+3. Si le poste (job_title) n'est pas écrit mais que le contexte général ou l'activité suggère fortement une fonction, écris cette fonction déduite.
+4. Si l'adresse (address) ne mentionne pas la ville ou le pays mais contient des indications locales (ex: 'Bastos', 'Akwa', 'Biyem-Assi'), complète intelligemment avec la ville et le pays probables (ex: 'Bastos, Yaoundé, Cameroun' ou 'Akwa, Douala, Cameroun').
+5. Génère au moins 3 tags pertinents (tags) séparés par des virgules décrivant le type d'activité, le domaine et la localisation (ex: "VIP, Partenaire, Santé, Yaoundé").
+
+Renvoie obligatoirement un objet JSON valide contenant EXACTEMENT ces clés :
+{
+  "name": "Nom complet",
+  "company": "Nom de l'entreprise déduit ou lu",
+  "job_title": "Poste ou fonction déduit ou lu",
+  "phone": "Numéro de téléphone nettoyé au format international standard",
+  "email": "Adresse email",
+  "website": "Site web lu ou déduit (ex: www.domaine.com)",
+  "address": "Adresse complète lue ou enrichie",
+  "tags": "Tags générés et séparés par des virgules",
+  "raw_text": "Tout le texte brut visible sur la carte"
+}
+
+Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.`;
 
     const requestBody = {
       contents: [

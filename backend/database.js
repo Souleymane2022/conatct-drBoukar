@@ -38,13 +38,32 @@ function initDb() {
         )
       `;
 
-      poolPG.query(sqlCreate, (err, res) => {
+      poolPG.query(sqlCreate, async (err, res) => {
         if (err) {
           console.error('Erreur de création de la table PostgreSQL:', err.message);
           return reject(err);
         }
-        console.log('Base de données PostgreSQL prête (Table cards ok).');
-        resolve();
+
+        // S'assurer que toutes les colonnes requises sont présentes (migration/mise à jour du schéma si table déjà existante)
+        try {
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS name VARCHAR(255)');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS company VARCHAR(255)');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS job_title VARCHAR(255)');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS phone VARCHAR(100)');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS email VARCHAR(255)');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS website VARCHAR(255)');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS address TEXT');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS tags TEXT');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS raw_text TEXT');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS file_path TEXT');
+          await poolPG.query('ALTER TABLE cards ADD COLUMN IF NOT EXISTS file_type VARCHAR(100)');
+          
+          console.log('Base de données PostgreSQL prête (Table cards et colonnes migrées/vérifiées).');
+          resolve();
+        } catch (alterErr) {
+          console.error('Erreur lors de la vérification/migration des colonnes PostgreSQL:', alterErr.message);
+          reject(alterErr);
+        }
       });
     } else {
       console.log('Utilisation de la base SQLite locale...');
@@ -90,11 +109,8 @@ function initDb() {
 function queryHelper(sql, params = []) {
   return new Promise((resolve, reject) => {
     if (isPostgres) {
-      // Remplacer les ? par $1, $2, $3...
       let index = 1;
       const pgSql = sql.replace(/\?/g, () => `$${index++}`);
-      
-      // PostgreSQL est sensible à la casse, on remplace LIKE par ILIKE pour les recherches insensibles
       const finalSql = pgSql.replace(/\bLIKE\b/gi, 'ILIKE');
 
       poolPG.query(finalSql, params, (err, result) => {
@@ -131,7 +147,6 @@ async function getAllCards(search = '', tag = '') {
   const rows = await queryHelper(sql, params);
   
   if (tag) {
-    // Filtrage précis des tags
     return rows.filter(row => {
       if (!row.tags) return false;
       const tagList = row.tags.split(',').map(t => t.trim().toLowerCase());
@@ -170,7 +185,6 @@ function createCard(card) {
     ];
 
     if (isPostgres) {
-      // Pour Postgres, on ajoute RETURNING id pour récupérer l'ID généré
       let index = 1;
       const pgSql = sql.replace(/\?/g, () => `$${index++}`) + ' RETURNING id';
       poolPG.query(pgSql, params, (err, result) => {

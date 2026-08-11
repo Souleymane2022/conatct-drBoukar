@@ -524,16 +524,29 @@ async function handleFileInput(file) {
     return;
   }
 
-  state.uploadedFile = file;
-  
   // Activer l'étape de chargement/OCR
   DOM.stepUpload.classList.remove('active');
   DOM.stepOcrProgress.classList.add('active');
+
+  let fileToProcess = file;
+
+  if (isImage) {
+    updateOcrProgress("Optimisation de l'image...", 0.05);
+    try {
+      // Compresser l'image à 1200px max de large pour éviter la limite Vercel de 4.5MB
+      fileToProcess = await compressImage(file);
+      console.log(`Image optimisée. Taille originale: ${(file.size / 1024 / 1024).toFixed(2)}MB, Nouvelle taille: ${(fileToProcess.size / 1024 / 1024).toFixed(2)}MB`);
+    } catch (compressErr) {
+      console.warn("Échec de compression, utilisation de l'original:", compressErr);
+    }
+  }
+
+  state.uploadedFile = fileToProcess;
   
   // Préparer l'affichage de l'image locale immédiatement pour l'aperçu
   let canvas = null;
   if (isImage) {
-    const imageUrl = URL.createObjectURL(file);
+    const imageUrl = URL.createObjectURL(fileToProcess);
     const img = document.createElement('img');
     img.src = imageUrl;
     DOM.documentPreviewContainer.innerHTML = '';
@@ -1022,5 +1035,47 @@ function fileToBase64(file) {
     reader.readAsDataURL(file);
     reader.onload = () => resolve(reader.result);
     reader.onerror = error => reject(error);
+  });
+}
+
+// Compresser et optimiser l'image avant l'upload (évite la limite Vercel de 4.5 Mo)
+function compressImage(file, maxWidth = 1200, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = event => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          blob => {
+            const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            });
+            resolve(compressedFile);
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      img.onerror = err => reject(err);
+    };
+    reader.onerror = err => reject(err);
   });
 }
