@@ -150,8 +150,8 @@ app.post('/api/cards/analyze', upload.single('file'), async (req, res) => {
       console.warn("Impossible de supprimer le fichier temporaire:", unlinkErr.message);
     }
 
-    // Préparer la requête pour Gemini API (utilisation de fetch)
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Préparer la requête pour Gemini API (utilisation de la version stable v1)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
     
     const prompt = `Tu es un assistant expert en numérisation de cartes de visite et en enrichissement de données.
 Analyse cette image de carte de visite (ou document PDF) et extrais ou déduis intelligemment toutes les informations possibles. 
