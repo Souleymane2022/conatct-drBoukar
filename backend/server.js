@@ -245,7 +245,29 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
 
   } catch (err) {
     console.error("Erreur globale lors de l'analyse avec Gemini:", err.message);
-    res.json({ useFallback: true, error: err.message });
+    
+    // Tenter de récupérer la liste des modèles disponibles pour aider au débogage
+    let availableModels = [];
+    try {
+      if (apiKey) {
+        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+        const listRes = await fetch(listUrl);
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          if (listData && listData.models) {
+            availableModels = listData.models.map(m => m.name.replace('models/', ''));
+          }
+        }
+      }
+    } catch (listErr) {
+      console.warn("Impossible de récupérer la liste des modèles:", listErr.message);
+    }
+
+    res.json({ 
+      useFallback: true, 
+      error: err.message, 
+      availableModels: availableModels 
+    });
   }
 });
 

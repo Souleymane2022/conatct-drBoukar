@@ -598,7 +598,11 @@ async function handleFileInput(file) {
         } else {
           // Si le serveur dit d'utiliser le fallback
           console.warn("Le serveur a demandé d'utiliser le fallback:", result.error || result.message);
-          showToast("Gemini indisponible (" + (result.error || result.message || "Clé d'API manquante") + "). Utilisation du lecteur local.", "info");
+          let errMsg = result.error || result.message || "Clé d'API manquante";
+          if (result.availableModels && result.availableModels.length > 0) {
+            errMsg += " (Dispo: " + result.availableModels.slice(0, 3).join(', ') + ")";
+          }
+          showToast("Gemini indisponible (" + errMsg + "). Utilisation du lecteur local.", "info");
         }
       } else {
         showToast("Erreur serveur d'analyse (" + response.status + "). Utilisation du lecteur local.", "error");
