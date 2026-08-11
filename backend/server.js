@@ -198,14 +198,14 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
       }
     };
 
-    // Liste élargie des modèles à essayer par ordre de préférence
+    // Liste élargie des modèles à essayer par ordre de préférence (incluant la série Gemini 3.x active en 2026)
     const modelsToTry = [
+      { name: 'gemini-3.5-flash', version: 'v1beta' },
+      { name: 'gemini-3.1-flash-lite', version: 'v1beta' },
+      { name: 'gemini-3.5-pro', version: 'v1beta' },
+      { name: 'gemini-3.0-flash', version: 'v1beta' },
       { name: 'gemini-2.0-flash', version: 'v1beta' },
-      { name: 'gemini-1.5-flash', version: 'v1' },
-      { name: 'gemini-1.5-flash', version: 'v1beta' },
-      { name: 'gemini-2.5-flash', version: 'v1beta' },
-      { name: 'gemini-2.5-pro', version: 'v1beta' },
-      { name: 'gemini-1.5-flash-latest', version: 'v1beta' }
+      { name: 'gemini-1.5-flash', version: 'v1' }
     ];
 
     let modelErrors = [];
