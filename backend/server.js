@@ -198,12 +198,10 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
       }
     };
 
-    // Liste des modèles et versions d'API à essayer par ordre de préférence
+    // Liste des modèles supportés sur votre projet
     const modelsToTry = [
       { name: 'gemini-2.5-flash', version: 'v1beta' },
-      { name: 'gemini-1.5-flash-latest', version: 'v1beta' },
-      { name: 'gemini-1.5-flash', version: 'v1' },
-      { name: 'gemini-1.5-flash', version: 'v1beta' }
+      { name: 'gemini-2.5-pro', version: 'v1beta' }
     ];
 
     let lastError = null;
@@ -223,7 +221,14 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
         if (geminiResponse.ok) {
           const responseData = await geminiResponse.json();
           const responseText = responseData.candidates[0].content.parts[0].text;
-          extractedData = JSON.parse(responseText);
+          
+          // Nettoyer d'éventuelles balises markdown ```json ... ``` générées par l'IA
+          let cleanedText = responseText.trim();
+          if (cleanedText.startsWith('```')) {
+            cleanedText = cleanedText.replace(/^```(?:json)?/gi, '').replace(/```$/g, '').trim();
+          }
+          
+          extractedData = JSON.parse(cleanedText);
           console.log(`Analyse réussie avec le modèle: ${model.name} !`);
           break; // Modèle fonctionnel trouvé, arrêt de la recherche
         } else {
@@ -233,7 +238,7 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
         }
       } catch (innerErr) {
         lastError = innerErr;
-        console.warn(`Erreur de connexion avec le modèle ${model.name}:`, innerErr.message);
+        console.warn(`Erreur de traitement avec le modèle ${model.name}:`, innerErr.message);
       }
     }
 
