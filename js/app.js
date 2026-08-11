@@ -595,10 +595,17 @@ async function handleFileInput(file) {
             }
           }
           return; // Succès Gemini, on s'arrête ici !
+        } else {
+          // Si le serveur dit d'utiliser le fallback
+          console.warn("Le serveur a demandé d'utiliser le fallback:", result.error || result.message);
+          showToast("Gemini indisponible (" + (result.error || result.message || "Clé d'API manquante") + "). Utilisation du lecteur local.", "info");
         }
+      } else {
+        showToast("Erreur serveur d'analyse (" + response.status + "). Utilisation du lecteur local.", "error");
       }
     } catch (err) {
       console.warn("L'analyse intelligente Gemini a échoué, passage au fallback local Tesseract:", err);
+      showToast("Impossible de joindre le serveur d'analyse. Utilisation du lecteur local.", "info");
     }
   }
 
