@@ -123,6 +123,94 @@ app.get('/api/cards/:id', async (req, res) => {
   }
 });
 
+// Analyser une carte avec Gemini API (ou fallback si clé manquante)
+app.post('/api/cards/analyze', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Aucun fichier téléversé." });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      // Indiquer qu'il n'y a pas de clé pour que le frontend fasse le fallback Tesseract
+      return res.status(200).json({ useFallback: true, message: "Pas de clé GEMINI_API_KEY configurée." });
+    }
+
+    console.log("Analyse de la carte avec l'API Gemini...");
+    
+    // Lire le fichier
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const base64Data = fileBuffer.toString('base64');
+    const mimeType = req.file.mimetype;
+
+    // Supprimer le fichier temporaire immédiatement
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (unlinkErr) {
+      console.warn("Impossible de supprimer le fichier temporaire:", unlinkErr.message);
+    }
+
+    // Préparer la requête pour Gemini API (utilisation de fetch)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    
+    const prompt = `Tu es un assistant spécialisé dans la numérisation de cartes de visite. Analyse cette image de carte de visite (ou PDF) et extrais les informations suivantes sous forme d'un objet JSON brut avec les clés exactes suivantes :
+- name (le nom complet de la personne)
+- company (le nom de l'entreprise)
+- job_title (le poste ou fonction)
+- phone (le numéro de téléphone au format propre, ex: +237 6XX XX XX XX)
+- email (l'adresse email)
+- website (le site internet)
+- address (l'adresse physique)
+- tags (propose des tags appropriés basés sur l'activité ou l'entreprise, ex: 'Partenaire', 'Médecin', 'Technologie')
+- raw_text (le texte complet brut lu sur la carte)
+
+Renvoie uniquement le JSON. Ne mets pas de balises de code markdown comme \`\`\`json.`;
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
+    };
+
+    const geminiResponse = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!geminiResponse.ok) {
+      const errText = await geminiResponse.text();
+      throw new Error(`Erreur API Gemini: ${geminiResponse.statusText} - ${errText}`);
+    }
+
+    const responseData = await geminiResponse.json();
+    const responseText = responseData.candidates[0].content.parts[0].text;
+    
+    // Parser le JSON retourné par Gemini
+    const extractedData = JSON.parse(responseText);
+    
+    res.json({ useFallback: false, data: extractedData });
+
+  } catch (err) {
+    console.error("Erreur lors de l'analyse avec Gemini:", err.message);
+    // En cas d'erreur de l'API Gemini, on répond au client qu'il peut faire un fallback Tesseract
+    res.json({ useFallback: true, error: err.message });
+  }
+});
+
 // Créer une nouvelle carte (avec ou sans fichier d'origine)
 app.post('/api/cards', upload.single('file'), async (req, res) => {
   try {

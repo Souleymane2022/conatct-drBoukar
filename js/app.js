@@ -514,6 +514,7 @@ function resetUploadModalSteps() {
 }
 
 // Analyser un fichier téléversé (Image ou PDF)
+// Analyser un fichier téléversé (Image ou PDF)
 async function handleFileInput(file) {
   const isImage = file.type.startsWith('image/');
   const isPdf = file.type === 'application/pdf';
@@ -529,20 +530,71 @@ async function handleFileInput(file) {
   DOM.stepUpload.classList.remove('active');
   DOM.stepOcrProgress.classList.add('active');
   
+  // Préparer l'affichage de l'image locale immédiatement pour l'aperçu
+  let canvas = null;
+  if (isImage) {
+    const imageUrl = URL.createObjectURL(file);
+    const img = document.createElement('img');
+    img.src = imageUrl;
+    DOM.documentPreviewContainer.innerHTML = '';
+    DOM.documentPreviewContainer.appendChild(img);
+  }
+
+  // Tenter l'analyse intelligente avec l'API Gemini via le backend si on n'est pas en localStorage
+  if (!state.useLocalStorage) {
+    try {
+      updateOcrProgress("Analyse de la mise en page (Gemini AI)...", 0.3);
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const response = await fetch(`${API_URL}/api/cards/analyze`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: formData
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result && !result.useFallback) {
+          // Gemini a extrait avec succès les données structurées !
+          updateOcrProgress("Analyse terminée avec succès !", 1.0);
+          showReviewStepWithData(result.data);
+          
+          // Si c'est un PDF, faire quand même le rendu canvas pour l'aperçu
+          if (isPdf) {
+            try {
+              const arrayBuffer = await file.arrayBuffer();
+              const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+              const page = await pdf.getPage(1);
+              const viewport = page.getViewport({ scale: 1.5 });
+              canvas = document.createElement('canvas');
+              const context = canvas.getContext('2d');
+              canvas.height = viewport.height;
+              canvas.width = viewport.width;
+              await page.render({ canvasContext: context, viewport: viewport }).promise;
+              state.ocrCanvas = canvas;
+              DOM.documentPreviewContainer.innerHTML = '';
+              DOM.documentPreviewContainer.appendChild(canvas);
+            } catch (pdfErr) {
+              console.warn("Échec du rendu du PDF pour l'aperçu:", pdfErr);
+              DOM.documentPreviewContainer.innerHTML = '<div style="font-size: 3rem; color: var(--text-muted);"><i class="fa-solid fa-file-pdf"></i></div>';
+            }
+          }
+          return; // Succès Gemini, on s'arrête ici !
+        }
+      }
+    } catch (err) {
+      console.warn("L'analyse intelligente Gemini a échoué, passage au fallback local Tesseract:", err);
+    }
+  }
+
+  // Fallback : OCR Tesseract classique (local)
   try {
     let extractedText = '';
-    let canvas = null;
+    updateOcrProgress("Initialisation de l'OCR local...", 0.1);
 
     if (isImage) {
-      // 1. Lire l'image locale pour l'affichage visuel
-      const imageUrl = URL.createObjectURL(file);
-      const img = document.createElement('img');
-      img.src = imageUrl;
-      
-      DOM.documentPreviewContainer.innerHTML = '';
-      DOM.documentPreviewContainer.appendChild(img);
-
-      // 2. OCR Tesseract
       extractedText = await OCR.extractTextFromImage(file, (status, progress) => {
         updateOcrProgress(status, progress);
       });
@@ -570,19 +622,21 @@ async function handleFileInput(file) {
     console.error("Erreur durant l'extraction OCR:", error);
     showToast("Reconnaissance automatique (OCR) indisponible. Saisie manuelle activée.", "error");
     
-    // Passer quand même à l'étape de révision avec un texte vide pour permettre la saisie manuelle
+    // Passer quand même à l'étape de révision avec un texte vide
     showReviewStep("");
     
-    // Afficher un message d'avertissement dans le conteneur de prévisualisation
-    DOM.documentPreviewContainer.innerHTML = `
-      <div style="text-align: center; color: var(--warning); padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px;">
-        <i class="fa-solid fa-triangle-exclamation" style="font-size: 3rem; color: var(--warning);"></i>
-        <h4 style="margin: 0; color: var(--text-primary);">L'OCR n'a pas pu s'initialiser</h4>
-        <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0; max-width: 250px;">
-          Vous êtes peut-être hors-ligne. Vous pouvez remplir le formulaire à droite et enregistrer le fichier original.
-        </p>
-      </div>
-    `;
+    // Afficher un message d'avertissement dans le conteneur de prévisualisation (sauf si image déjà visible)
+    if (!isImage) {
+      DOM.documentPreviewContainer.innerHTML = `
+        <div style="text-align: center; color: var(--warning); padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px;">
+          <i class="fa-solid fa-triangle-exclamation" style="font-size: 3rem; color: var(--warning);"></i>
+          <h4 style="margin: 0; color: var(--text-primary);">L'OCR n'a pas pu s'initialiser</h4>
+          <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0; max-width: 250px;">
+            Vous êtes peut-être hors-ligne. Vous pouvez remplir le formulaire à droite et enregistrer le fichier original.
+          </p>
+        </div>
+      `;
+    }
   }
 }
 
@@ -621,6 +675,23 @@ function showReviewStep(extractedText) {
   DOM.formWebsite.value = parsedData.website;
   DOM.formAddress.value = parsedData.address;
   DOM.formTags.value = parsedData.tags;
+}
+
+// Afficher l'étape de révision avec les données déjà structurées (Gemini)
+function showReviewStepWithData(parsedData) {
+  DOM.stepOcrProgress.classList.remove('active');
+  DOM.stepReview.classList.add('active');
+  
+  DOM.reviewRawText.value = parsedData.raw_text || '';
+  
+  DOM.formName.value = parsedData.name || '';
+  DOM.formCompany.value = parsedData.company || '';
+  DOM.formJob.value = parsedData.job_title || '';
+  DOM.formPhone.value = parsedData.phone || '';
+  DOM.formEmail.value = parsedData.email || '';
+  DOM.formWebsite.value = parsedData.website || '';
+  DOM.formAddress.value = parsedData.address || '';
+  DOM.formTags.value = parsedData.tags || 'Import IA';
 }
 
 // Mettre à jour l'indicateur visuel de progression de l'OCR
