@@ -372,3 +372,5 @@ db.initDb()
   .catch((err) => {
     console.error('Impossible de démarrer l\'application en raison d\'une erreur de base de données:', err.message);
   });
+
+// Déclencheur de build Vercel pour la mise à jour des clés API.
