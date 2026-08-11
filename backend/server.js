@@ -204,7 +204,7 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
       { name: 'gemini-2.5-pro', version: 'v1beta' }
     ];
 
-    let lastError = null;
+    let modelErrors = [];
     let extractedData = null;
 
     for (const model of modelsToTry) {
@@ -233,17 +233,19 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
           break; // Modèle fonctionnel trouvé, arrêt de la recherche
         } else {
           const errText = await geminiResponse.text();
-          lastError = new Error(`Modèle ${model.name} (${model.version}) non disponible: ${geminiResponse.statusText} - ${errText}`);
-          console.warn(lastError.message);
+          const msg = `Modèle ${model.name} (${model.version}) non disponible: ${geminiResponse.statusText} - ${errText}`;
+          console.warn(msg);
+          modelErrors.push({ model: model.name, error: msg });
         }
       } catch (innerErr) {
-        lastError = innerErr;
         console.warn(`Erreur de traitement avec le modèle ${model.name}:`, innerErr.message);
+        modelErrors.push({ model: model.name, error: innerErr.message });
       }
     }
 
     if (!extractedData) {
-      throw lastError || new Error("Aucun modèle Gemini configuré n'est accessible avec cette clé API.");
+      const errDetail = modelErrors.map(e => `${e.model}: ${e.error}`).join(' | ');
+      throw new Error(`Échec de l'analyse. Détails: ${errDetail}`);
     }
     
     res.json({ useFallback: false, data: extractedData });
