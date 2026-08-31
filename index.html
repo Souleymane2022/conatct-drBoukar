@@ -133,11 +133,12 @@
           <div class="upload-options">
             <div class="drop-zone" id="drop-zone">
               <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
-              <h3>Glissez-déposez un fichier ici</h3>
+              <h3>Glissez-déposez un ou plusieurs fichiers ici</h3>
               <p>Formats supportés : <strong>IMG (PNG, JPG)</strong> ou <strong>PDF</strong></p>
+              <p class="subtitle">Sélectionnez plusieurs cartes à la fois : elles seront lues et enregistrées automatiquement.</p>
               <span>ou</span>
               <label for="file-input" class="btn btn-outline">Parcourir les fichiers</label>
-              <input type="file" id="file-input" accept="image/*,application/pdf" style="display: none;">
+              <input type="file" id="file-input" accept="image/*,application/pdf" multiple style="display: none;">
             </div>
             
             <div class="text-input-section">
@@ -160,6 +161,24 @@
               <div class="progress-bar-fill" id="ocr-progress-fill"></div>
             </div>
             <span class="progress-percent" id="ocr-progress-percent">0%</span>
+          </div>
+        </div>
+
+        <!-- Step 2bis: Batch Import Progress (plusieurs fichiers) -->
+        <div id="step-batch-progress" class="upload-step">
+          <div class="batch-progress-content">
+            <h3 id="batch-status-text"><i class="fa-solid fa-layer-group"></i> Importation de plusieurs cartes...</h3>
+            <p>Chaque fichier est analysé puis enregistré automatiquement dans la base de données.</p>
+            <div class="progress-bar-container">
+              <div class="progress-bar-fill" id="batch-progress-fill"></div>
+            </div>
+            <span class="progress-percent" id="batch-progress-percent">0 / 0</span>
+            <ul class="batch-file-list" id="batch-file-list">
+              <!-- Un élément par fichier, injecté dynamiquement -->
+            </ul>
+            <div class="form-actions" id="batch-done-actions" style="display: none;">
+              <button type="button" class="btn btn-primary" id="btn-batch-done"><i class="fa-solid fa-check"></i> Terminer</button>
+            </div>
           </div>
         </div>
 
