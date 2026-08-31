@@ -552,12 +552,16 @@ async function handleFileInput(file) {
   DOM.stepOcrProgress.classList.add('active');
 
   let fileToProcess = file;
+  let fileForAnalysis = file;
 
   if (isImage) {
     updateOcrProgress("Optimisation de l'image pour mobile...", 0.05);
     try {
-      // Compresser à 800px max de large pour un téléversement ultra-rapide sur mobile
+      // Version stockée : 800px suffit pour l'aperçu et allège la base de données
       fileToProcess = await compressImage(file, 800, 0.7);
+      // Version haute résolution pour la LECTURE : les petits textes d'une carte
+      // doivent rester nets pour que Gemini/OCR les lise correctement
+      fileForAnalysis = await compressImage(file, 1600, 0.85);
       console.log(`Image optimisée. Taille originale: ${(file.size / 1024 / 1024).toFixed(2)}MB, Nouvelle taille: ${(fileToProcess.size / 1024 / 1024).toFixed(2)}MB`);
     } catch (compressErr) {
       console.warn("Échec de compression, utilisation de l'original:", compressErr);
@@ -582,8 +586,9 @@ async function handleFileInput(file) {
       updateOcrProgress("Analyse de la mise en page (Gemini AI)...", 0.3);
 
       const formData = new FormData();
-      // Envoyer la version compressée : upload plus rapide et sous la limite de 4.5 Mo de Vercel
-      formData.append('file', fileToProcess);
+      // Envoyer la version haute résolution (1600px) : assez nette pour bien lire
+      // les textes, mais toujours sous la limite de 4.5 Mo de Vercel
+      formData.append('file', fileForAnalysis);
 
       const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
         method: 'POST',
@@ -820,9 +825,13 @@ async function extractCardDataFromFile(file, onStatus, ocrLock = null) {
   const isPdf = file.type === 'application/pdf';
 
   let fileToSave = file;
+  let fileForAnalysis = file;
   if (isImage) {
     try {
+      // Version stockée : 800px suffit pour l'aperçu et allège la base de données
       fileToSave = await compressImage(file, 800, 0.7);
+      // Version haute résolution pour la LECTURE : les petits textes doivent rester nets
+      fileForAnalysis = await compressImage(file, 1600, 0.85);
     } catch (compressErr) {
       console.warn("Échec de compression, utilisation de l'original:", compressErr);
     }
@@ -833,8 +842,9 @@ async function extractCardDataFromFile(file, onStatus, ocrLock = null) {
     try {
       onStatus('Analyse IA (Gemini)...');
       const formData = new FormData();
-      // Envoyer la version compressée : upload plus rapide et sous la limite de 4.5 Mo de Vercel
-      formData.append('file', fileToSave);
+      // Envoyer la version haute résolution (1600px) : assez nette pour bien lire
+      // les textes, mais toujours sous la limite de 4.5 Mo de Vercel
+      formData.append('file', fileForAnalysis);
 
       const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
         method: 'POST',
@@ -863,8 +873,8 @@ async function extractCardDataFromFile(file, onStatus, ocrLock = null) {
   // En cas d'échec de l'OCR, on insère quand même la carte avec le nom du fichier
   const runOcr = async () => {
     if (isImage) {
-      // OCR sur l'image compressée : beaucoup plus rapide et suffisant pour une carte
-      return await OCR.extractTextFromImage(fileToSave, (status, progress) => {
+      // OCR sur la version haute résolution : meilleure lecture des petits textes
+      return await OCR.extractTextFromImage(fileForAnalysis, (status, progress) => {
         onStatus(`${status} (${Math.round(progress * 100)}%)`);
       }, true);
     } else if (isPdf) {
