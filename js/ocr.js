@@ -7,21 +7,75 @@ if (window.pdfjsLib) {
  * Moteur OCR et Analyse de Contacts locaux
  */
 const OCR = {
-  
+
+  // Moteur Tesseract partagé (réutilisé lors d'un import groupé pour éviter
+  // de réinitialiser le moteur et re-télécharger la langue à chaque fichier)
+  _sharedWorker: null,
+  _sharedProgressCb: null,
+
+  async getSharedWorker() {
+    if (!window.Tesseract) {
+      throw new Error("La bibliothèque Tesseract.js n'est pas chargée.");
+    }
+    if (this._sharedWorker) return this._sharedWorker;
+
+    const worker = await Tesseract.createWorker({
+      logger: m => {
+        if (this._sharedProgressCb && m.status === 'recognizing text') {
+          this._sharedProgressCb(`Reconnaissance de texte : ${Math.round(m.progress * 100)}%`, m.progress * 0.8 + 0.15);
+        }
+      }
+    });
+    await worker.loadLanguage('fra');
+    await worker.initialize('fra');
+    this._sharedWorker = worker;
+    return worker;
+  },
+
+  async releaseSharedWorker() {
+    if (this._sharedWorker) {
+      try {
+        await this._sharedWorker.terminate();
+      } catch (e) {
+        console.warn("Impossible de terminer le moteur OCR partagé:", e);
+      }
+      this._sharedWorker = null;
+      this._sharedProgressCb = null;
+    }
+  },
+
   /**
    * Effectue l'OCR sur un fichier Image
    * @param {File|Blob|HTMLCanvasElement} imageSource - Image à analyser
    * @param {Function} progressCallback - Callback(status, progress)
+   * @param {boolean} useSharedWorker - Réutiliser le moteur partagé (import groupé)
    * @returns {Promise<string>} - Texte extrait
    */
-  async extractTextFromImage(imageSource, progressCallback) {
+  async extractTextFromImage(imageSource, progressCallback, useSharedWorker = false) {
     if (!window.Tesseract) {
       throw new Error("La bibliothèque Tesseract.js n'est pas chargée.");
     }
-    
+
+    if (useSharedWorker) {
+      try {
+        progressCallback('Préparation du moteur OCR...', 0.1);
+        const worker = await this.getSharedWorker();
+        this._sharedProgressCb = progressCallback;
+        progressCallback('Extraction du texte...', 0.2);
+        const { data: { text } } = await worker.recognize(imageSource);
+        this._sharedProgressCb = null;
+        progressCallback('Terminé', 1.0);
+        return text;
+      } catch (error) {
+        this._sharedProgressCb = null;
+        console.error("Erreur OCR Tesseract (moteur partagé):", error);
+        throw new Error("Échec de la reconnaissance de texte sur l'image.");
+      }
+    }
+
     try {
       progressCallback('Initialisation de Tesseract...', 0.1);
-      
+
       const worker = await Tesseract.createWorker({
         logger: m => {
           if (m.status === 'recognizing text') {
@@ -31,14 +85,14 @@ const OCR = {
           }
         }
       });
-      
+
       // Charger uniquement le français pour accélérer le téléchargement et fiabiliser le chargement en local
       await worker.loadLanguage('fra');
       await worker.initialize('fra');
-      
+
       progressCallback('Extraction du texte...', 0.9);
       const { data: { text } } = await worker.recognize(imageSource);
-      
+
       await worker.terminate();
       progressCallback('Terminé', 1.0);
       return text;
@@ -53,9 +107,10 @@ const OCR = {
    * @param {File} pdfFile - Fichier PDF à analyser
    * @param {Function} progressCallback - Callback(status, progress)
    * @param {HTMLDivElement} canvasContainer - Optionnel, pour rendre la page
+   * @param {boolean} useSharedWorker - Réutiliser le moteur OCR partagé (import groupé)
    * @returns {Promise<{text: string, canvas: HTMLCanvasElement|null}>}
    */
-  async extractTextFromPdf(pdfFile, progressCallback, canvasContainer = null) {
+  async extractTextFromPdf(pdfFile, progressCallback, canvasContainer = null, useSharedWorker = false) {
     if (!window.pdfjsLib) {
       throw new Error("La bibliothèque PDF.js n'est pas chargée.");
     }
@@ -94,7 +149,7 @@ const OCR = {
           // Ajuster la progression (de 0.4 à 0.95)
           const adjustedProgress = 0.4 + (val * 0.55);
           progressCallback(status, adjustedProgress);
-        });
+        }, useSharedWorker);
       } else {
         progressCallback('Texte extrait directement avec succès !', 1.0);
       }
