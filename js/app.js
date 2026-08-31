@@ -580,15 +580,16 @@ async function handleFileInput(file) {
   if (!state.useLocalStorage) {
     try {
       updateOcrProgress("Analyse de la mise en page (Gemini AI)...", 0.3);
-      
+
       const formData = new FormData();
-      formData.append('file', file);
-      
-      const response = await fetch(`${API_URL}/api/cards/analyze`, {
+      // Envoyer la version compressée : upload plus rapide et sous la limite de 4.5 Mo de Vercel
+      formData.append('file', fileToProcess);
+
+      const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData
-      });
+      }, 45000);
       
       if (response.ok) {
         const result = await response.json();
@@ -744,18 +745,25 @@ async function handleMultipleFiles(fileList) {
 
   let successCount = 0;
   let errorCount = 0;
+  let completedCount = 0;
 
-  // Traiter les fichiers un par un (séquentiel pour ne pas saturer le serveur ni l'OCR)
-  for (let i = 0; i < validFiles.length; i++) {
+  // L'OCR local (Tesseract) ne traite qu'une image à la fois : verrou d'exclusion
+  let ocrChain = Promise.resolve();
+  const withOcrLock = (fn) => {
+    const run = ocrChain.then(fn, fn);
+    ocrChain = run.then(() => {}, () => {});
+    return run;
+  };
+
+  const processFileAt = async (i) => {
     const file = validFiles[i];
     const li = listItems[i];
-    li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     setItemStatus(li, 'processing', 'fa-spinner fa-spin', 'Analyse en cours...');
 
     try {
       const { data, fileToSave } = await extractCardDataFromFile(file, (status) => {
         li.querySelector('.batch-file-status').textContent = status;
-      });
+      }, withOcrLock);
 
       setItemStatus(li, 'processing', 'fa-spinner fa-spin', 'Enregistrement...');
       await saveBatchCard(data, fileToSave);
@@ -768,7 +776,26 @@ async function handleMultipleFiles(fileList) {
       setItemStatus(li, 'error', 'fa-circle-exclamation', err.message || "Échec de l'import");
     }
 
-    updateBatchProgress(i + 1);
+    completedCount++;
+    updateBatchProgress(completedCount);
+  };
+
+  // Traiter plusieurs fichiers en parallèle (3 à la fois) pour accélérer l'import
+  const CONCURRENCY = 3;
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(CONCURRENCY, validFiles.length) }, async () => {
+    while (nextIndex < validFiles.length) {
+      const i = nextIndex++;
+      await processFileAt(i);
+    }
+  });
+  await Promise.all(runners);
+
+  // Libérer le moteur OCR partagé s'il a été utilisé
+  try {
+    await OCR.releaseSharedWorker();
+  } catch (e) {
+    console.warn("Erreur lors de la libération du moteur OCR:", e);
   }
 
   // Résumé final
@@ -788,7 +815,7 @@ async function handleMultipleFiles(fileList) {
 
 // Extraire les données d'une carte depuis un fichier (Gemini si dispo, sinon OCR local)
 // Retourne { data, fileToSave } où fileToSave est le fichier (compressé si image) à joindre à la carte
-async function extractCardDataFromFile(file, onStatus) {
+async function extractCardDataFromFile(file, onStatus, ocrLock = null) {
   const isImage = file.type.startsWith('image/');
   const isPdf = file.type === 'application/pdf';
 
@@ -806,13 +833,14 @@ async function extractCardDataFromFile(file, onStatus) {
     try {
       onStatus('Analyse IA (Gemini)...');
       const formData = new FormData();
-      formData.append('file', file);
+      // Envoyer la version compressée : upload plus rapide et sous la limite de 4.5 Mo de Vercel
+      formData.append('file', fileToSave);
 
-      const response = await fetch(`${API_URL}/api/cards/analyze`, {
+      const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData
-      });
+      }, 45000);
 
       if (response.ok) {
         const result = await response.json();
@@ -831,20 +859,27 @@ async function extractCardDataFromFile(file, onStatus) {
     }
   }
 
-  // 2. Fallback : OCR local (Tesseract / PDF.js)
+  // 2. Fallback : OCR local (Tesseract / PDF.js) avec moteur partagé et verrou d'exclusion
   // En cas d'échec de l'OCR, on insère quand même la carte avec le nom du fichier
-  let extractedText = '';
-  try {
+  const runOcr = async () => {
     if (isImage) {
-      extractedText = await OCR.extractTextFromImage(file, (status, progress) => {
+      // OCR sur l'image compressée : beaucoup plus rapide et suffisant pour une carte
+      return await OCR.extractTextFromImage(fileToSave, (status, progress) => {
         onStatus(`${status} (${Math.round(progress * 100)}%)`);
-      });
+      }, true);
     } else if (isPdf) {
       const res = await OCR.extractTextFromPdf(file, (status, progress) => {
         onStatus(`${status} (${Math.round(progress * 100)}%)`);
-      });
-      extractedText = res.text;
+      }, null, true);
+      return res.text;
     }
+    return '';
+  };
+
+  let extractedText = '';
+  try {
+    onStatus('En attente du lecteur OCR local...');
+    extractedText = ocrLock ? await ocrLock(runOcr) : await runOcr();
   } catch (ocrErr) {
     console.warn(`OCR local échoué pour "${file.name}", la carte sera enregistrée sans texte extrait:`, ocrErr);
   }
@@ -913,15 +948,36 @@ async function saveBatchCard(data, file) {
     formData.append('file', file);
   }
 
-  const response = await fetch(`${API_URL}/api/cards`, {
-    method: 'POST',
-    body: formData,
-    headers: getAuthHeaders()
-  });
+  // Deux tentatives : une coupure réseau passagère ne doit pas faire échouer la carte
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetchWithTimeout(`${API_URL}/api/cards`, {
+        method: 'POST',
+        body: formData,
+        headers: getAuthHeaders()
+      }, 45000);
 
-  if (!response.ok) {
-    throw new Error("Erreur d'enregistrement sur le serveur.");
+      if (response.ok) return;
+      lastError = new Error(`Erreur d'enregistrement sur le serveur (${response.status}).`);
+    } catch (err) {
+      lastError = err;
+    }
+
+    if (attempt < 2) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
   }
+
+  throw lastError || new Error("Erreur d'enregistrement sur le serveur.");
+}
+
+// Fetch avec délai maximum : évite qu'un fichier reste bloqué indéfiniment
+function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
 }
 
 // Traiter le texte brut directement coller

@@ -228,15 +228,25 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
     let modelErrors = [];
     let extractedData = null;
 
+    // Budget de temps global : rester sous la limite d'exécution des fonctions
+    // serverless Vercel pour renvoyer une réponse (fallback) plutôt qu'un timeout
+    const analiseStart = Date.now();
+    const TIME_BUDGET_MS = 22000;
+
     for (const model of modelsToTry) {
+      if (Date.now() - analiseStart > TIME_BUDGET_MS) {
+        modelErrors.push({ model: model.name, error: 'Budget de temps dépassé, modèle non essayé.' });
+        continue;
+      }
       try {
         console.log(`Tentative d'analyse avec le modèle: ${model.name} (${model.version})...`);
         const geminiUrl = `https://generativelanguage.googleapis.com/${model.version}/models/${model.name}:generateContent?key=${apiKey}`;
-        
+
         const geminiResponse = await fetch(geminiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(15000)
         });
 
         if (geminiResponse.ok) {
