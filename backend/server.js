@@ -211,7 +211,8 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
         }
       ],
       generationConfig: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        temperature: 0.1
       }
     };
 

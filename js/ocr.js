@@ -1,5 +1,5 @@
 // Configure worker for PDF.js
-if (window.pdfjsLib) {
+if (typeof window !== 'undefined' && window.pdfjsLib) {
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 }
 
@@ -26,8 +26,8 @@ const OCR = {
         }
       }
     });
-    await worker.loadLanguage('fra');
-    await worker.initialize('fra');
+    await worker.loadLanguage('fra+eng');
+    await worker.initialize('fra+eng');
     this._sharedWorker = worker;
     return worker;
   },
@@ -86,9 +86,9 @@ const OCR = {
         }
       });
 
-      // Charger uniquement le français pour accélérer le téléchargement et fiabiliser le chargement en local
-      await worker.loadLanguage('fra');
-      await worker.initialize('fra');
+      // Français + anglais : les cartes mélangent souvent les deux langues
+      await worker.loadLanguage('fra+eng');
+      await worker.initialize('fra+eng');
 
       progressCallback('Extraction du texte...', 0.9);
       const { data: { text } } = await worker.recognize(imageSource);
@@ -184,127 +184,116 @@ const OCR = {
 
     if (!text || text.trim() === '') return data;
 
-    // Découper le texte par lignes propres
+    // Découper le texte par lignes propres (espaces multiples normalisés)
     const lines = text.split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(line => line.length > 1);
 
-    // 1. Extraire l'email (Regex standard)
-    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-    const emailMatch = text.match(emailRegex);
-    if (emailMatch) {
-      data.email = emailMatch[0].trim();
+    // 1. Emails (tous, on garde le premier)
+    const emailMatches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+    if (emailMatches.length > 0) {
+      data.email = emailMatches[0].toLowerCase();
     }
 
-    // 2. Extraire le site web
-    const webRegex = /(https?:\/\/)?(www\.)?([a-zA-Z0-9-]+\.)+(com|net|org|fr|cm|info|biz|co|io|edu|gov)\b/i;
-    const webMatch = text.match(webRegex);
-    if (webMatch) {
-      data.website = webMatch[0].trim();
-    }
-
-    // 3. Extraire le téléphone (Chercher des motifs de numéro ou le mot clé "Tel", "Tél", "Phone", "Cel")
-    // Supporte formats internationaux (+237, etc.) et locaux avec espaces ou tirets
-    const phoneRegex = /(?:tel|tél|phone|cel|mob|mobile|phone|contact)?[\s.:-]*(\+?[0-9]{1,4}[\s.-]?)?([0-9]{2,3}[\s.-]?){3,4}[0-9]{2,4}/i;
-    const phoneMatches = text.match(phoneRegex);
-    if (phoneMatches) {
-      // Nettoyer si le préfixe comme "Tél:" a été capturé
-      let matchedPhone = phoneMatches[0];
-      // Si la regex attrape "Tél: +237...", on nettoie les lettres au début
-      matchedPhone = matchedPhone.replace(/(tel|tél|phone|cel|mob|mobile|contact|[:\s.-])+/i, '').trim();
-      if (matchedPhone.length >= 8) { // taille minimale d'un vrai numéro
-        data.phone = matchedPhone;
+    // 2. Site web (en excluant les adresses e-mail)
+    const webRegex = /(https?:\/\/[^\s]+)|((www\.)[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+)|\b[a-zA-Z0-9-]+\.(com|net|org|fr|cm|td|sn|ci|info|biz|co|io|edu|gov)\b/gi;
+    const webCandidates = (text.match(webRegex) || [])
+      .filter(w => !w.includes('@') && !emailMatches.some(e => e.includes(w.toLowerCase())));
+    if (webCandidates.length > 0) {
+      data.website = webCandidates[0].trim();
+    } else if (data.email) {
+      // Déduire le site depuis un e-mail professionnel (pas gmail/yahoo/etc.)
+      const domain = data.email.split('@')[1];
+      const generic = ['gmail.com', 'yahoo.com', 'yahoo.fr', 'hotmail.com', 'hotmail.fr', 'outlook.com', 'outlook.fr', 'icloud.com', 'live.com', 'live.fr'];
+      if (domain && !generic.includes(domain)) {
+        data.website = 'www.' + domain;
       }
     }
 
-    // Si aucun téléphone trouvé avec label, chercher un numéro pur qui ressemble à un téléphone
-    if (!data.phone) {
-      const genericPhoneRegex = /\+?([0-9]{2,4}[\s.-]?){3,5}[0-9]{2,4}/;
-      const genericMatch = text.match(genericPhoneRegex);
-      if (genericMatch && genericMatch[0].replace(/[\s.-]/g, '').length >= 9) {
-        data.phone = genericMatch[0].trim();
-      }
+    // 3. Téléphones : tous les numéros de 8 à 15 chiffres, dédupliqués (max 2)
+    const phones = [];
+    const phoneMatches = text.match(/\+?\d[\d\s.\-()\/]{6,}\d/g) || [];
+    phoneMatches.forEach(cand => {
+      cand.split('/').forEach(part => {
+        const digits = part.replace(/\D/g, '');
+        if (digits.length >= 8 && digits.length <= 15) {
+          const cleaned = part.trim().replace(/[\s.]+/g, ' ');
+          if (!phones.some(p => p.replace(/\D/g, '') === digits)) {
+            phones.push(cleaned);
+          }
+        }
+      });
+    });
+    if (phones.length > 0) {
+      data.phone = phones.slice(0, 2).join(' / ');
     }
 
-    // 4. Adresse (chercher des mots clés géographiques)
-    const addressKeywords = /bastos|yaounde|yaoundé|douala|kribi|garoua|maroua|bafoussam|bamenda|rue|avenue|route|street|road|bp|b\.p|box|imm|immeuble|quartier/i;
-    const addressLines = lines.filter(line => addressKeywords.test(line));
+    // 4. Adresse (mots clés géographiques, jamais une ligne contenant un e-mail)
+    const addressKeywords = /bastos|yaound|douala|kribi|garoua|maroua|bafoussam|bamenda|ndjamena|n['’]?djam|tchad|chad|cameroun|cameroon|rue|avenue|\bav\b|route|boulevard|\bbld\b|\bblvd\b|street|road|\bbp\b|b\.p|box|immeuble|\bimm\b|quartier|carrefour|rond[- ]point|face|derri[eè]re/i;
+    const addressLines = lines.filter(line => addressKeywords.test(line) && !line.includes('@'));
     if (addressLines.length > 0) {
-      // Prendre la ligne la plus longue contenant des adresses
       data.address = addressLines.reduce((a, b) => a.length > b.length ? a : b).trim();
     }
 
-    // 5. Analyse du Nom, de l'Entreprise et du Poste (Heuristique par lignes)
-    // Nous filtrons les lignes qui contiennent l'email, le téléphone ou le site web
+    // 5. Nom / Entreprise / Poste : heuristiques sur les lignes restantes
+    const contactLineRegex = /@|www\.|https?:|t[eé]l[\s.:]|phone|\bfax\b|mobile|\bcel\b|e-?mail|\bmail\b/i;
     const infoLines = lines.filter(line => {
-      const isEmail = emailMatch && line.includes(emailMatch[0]);
-      const isWeb = webMatch && line.includes(webMatch[0]);
-      const isPhone = data.phone && line.includes(data.phone);
-      const isAddress = data.address && line.includes(data.address);
-      return !isEmail && !isWeb && !isPhone && !isAddress;
+      if (contactLineRegex.test(line)) return false;
+      if (line.replace(/\D/g, '').length >= 6) return false; // ligne de téléphone
+      if (data.address && line === data.address) return false;
+      return true;
     });
 
-    // Mots clés courants pour les postes/fonctions
-    const jobKeywords = /directeur|dg|manager|engineer|ingénieur|gérant|fondateur|founder|ceo|commercial|consultant|technicien|chef|président|president|responsable|comptable|secrétaire/i;
+    const jobKeywords = /directeur|directrice|\bdg\b|manager|engineer|ing[eé]nieur|g[eé]rant|fondateur|fondatrice|founder|\bceo\b|\bpdg\b|commercial|consultant|technicien|\bchef\b|pr[eé]sident|responsable|comptable|secr[eé]taire|avocat|m[eé]decin|pharmacien|architecte|notaire|expert|coordinateur|coordonnateur|assistant|agent|juriste|analyste|d[eé]veloppeur|designer|infirmier|enseignant|professeur|formateur/i;
+    const companyHints = /\b(sarl|s\.a\.r\.l|sa|s\.a|sas|sasu|eurl|gie|ets|etablissements|group|groupe|sci|inc|ltd|llc|corp|cabinet|agence|soci[eé]t[eé]|entreprise|clinique|h[oô]pital|pharmacie|garage|boutique|restaurant|h[oô]tel|banque|assurance|universit[eé]|institut|centre|ong|association|solutions|services|consulting|technolog|international)\b/i;
+    // Titres honorifiques : font partie d'un nom de personne, pas d'un poste
+    const honorificPrefix = /^(dr|pr|me|mr|mme|mlle|m)\.?\s+/i;
 
-    if (infoLines.length > 0) {
-      // Parcourir les lignes épurées
-      let nameCandidate = '';
-      let companyCandidate = '';
-      let jobCandidate = '';
+    // Une ligne "nom de personne" : 2 à 4 mots commençant par une majuscule, sans indice société/poste
+    const isNameLike = (line) => {
+      const cleaned = line.replace(honorificPrefix, '');
+      const words = cleaned.split(' ').filter(Boolean);
+      if (words.length < 2 || words.length > 4) return false;
+      if (companyHints.test(cleaned) || jobKeywords.test(cleaned)) return false;
+      return words.every(w => /^[A-ZÀ-Þ]/.test(w));
+    };
 
-      // La ligne contenant un mot clé de poste est probablement le Job
-      const jobLineIdx = infoLines.findIndex(line => jobKeywords.test(line));
-      if (jobLineIdx !== -1) {
-        jobCandidate = infoLines[jobLineIdx];
-      }
+    let nameLine = infoLines.find(isNameLike) || '';
+    let jobLine = infoLines.find(line => jobKeywords.test(line) && line !== nameLine) || '';
+    let companyLine = infoLines.find(line => companyHints.test(line) && line !== nameLine && line !== jobLine) || '';
 
-      // Si le job est trouvé, les lignes au-dessus sont souvent le Nom ou l'Entreprise
-      if (jobCandidate) {
-        data.job_title = jobCandidate;
-        
-        // Nom : première ligne en général (ou celle juste au-dessus du job)
-        if (jobLineIdx > 0) {
-          nameCandidate = infoLines[0];
-          if (jobLineIdx > 1) {
-            // Si on a au moins 2 lignes avant le job, l'autre pourrait être l'entreprise
-            companyCandidate = infoLines[1];
-          }
-        } else if (infoLines.length > 1) {
-          // Si le job était en première ligne, le nom est probablement après
-          nameCandidate = infoLines[1];
-          if (infoLines.length > 2) {
-            companyCandidate = infoLines[2];
-          }
-        }
-      } else {
-        // Sans poste explicite, on fait une supposition simple :
-        // Ligne 0 = Nom, Ligne 1 = Entreprise (si elle ne ressemble pas à un nom propre long, ou par défaut)
-        nameCandidate = infoLines[0];
-        if (infoLines.length > 1) {
-          companyCandidate = infoLines[1];
-        }
-        if (infoLines.length > 2) {
-          jobCandidate = infoLines[2];
-        }
-      }
-
-      data.name = nameCandidate.trim();
-      data.company = companyCandidate.trim();
-      
-      if (!data.job_title && jobCandidate) {
-        data.job_title = jobCandidate.trim();
-      }
+    // Une ligne tout en majuscules est souvent le nom de l'entreprise
+    if (!companyLine) {
+      companyLine = infoLines.find(line =>
+        line !== nameLine && line !== jobLine &&
+        line === line.toUpperCase() && /[A-ZÀ-Þ]{3}/.test(line)
+      ) || '';
     }
+    // Fallbacks par position
+    if (!nameLine && infoLines.length > 0) nameLine = infoLines[0];
+    if (!companyLine) companyLine = infoLines.find(line => line !== nameLine && line !== jobLine) || '';
+    if (!jobLine) jobLine = infoLines.find(line => line !== nameLine && line !== companyLine) || '';
 
-    // Fallbacks de sécurité si l'heuristique n'a rien trouvé
-    if (!data.name && lines.length > 0) {
-      data.name = lines[0]; // Première ligne du texte brut par défaut
+    data.name = nameLine.trim();
+    data.company = companyLine.trim();
+    data.job_title = jobLine.trim();
+
+    // Derniers filets de sécurité
+    if (!data.name && lines.length > 0) data.name = lines[0];
+    if (!data.name && data.email) {
+      // Reconstruire un nom depuis l'e-mail (prenom.nom@... -> Prenom Nom)
+      const local = data.email.split('@')[0].replace(/[._-]+/g, ' ');
+      data.name = local.replace(/(^|\s)\w/g, c => c.toUpperCase()).trim();
     }
 
     return data;
   }
 };
 
-// Exposer à l'objet global window
-window.OCR = OCR;
+// Exposer à l'objet global window (navigateur) ou module (tests Node)
+if (typeof window !== 'undefined') {
+  window.OCR = OCR;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = OCR;
+}
