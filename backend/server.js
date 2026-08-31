@@ -215,11 +215,15 @@ Ne renvoie aucun texte d'introduction ni de conclusion, uniquement l'objet JSON.
       }
     };
 
-    // Liste élargie des modèles à essayer par ordre de préférence (incluant la série Gemini 3.x active en 2026)
+    // Liste des modèles à essayer par ordre de préférence.
+    // Les modèles stables et largement disponibles (2.5) d'abord : ils répondent
+    // vite et lisent très bien les cartes ; les autres servent de secours.
     const modelsToTry = [
+      { name: 'gemini-2.5-flash', version: 'v1beta' },
+      { name: 'gemini-flash-latest', version: 'v1beta' },
+      { name: 'gemini-2.5-pro', version: 'v1beta' },
       { name: 'gemini-3.5-flash', version: 'v1beta' },
       { name: 'gemini-3.1-flash-lite', version: 'v1beta' },
-      { name: 'gemini-3.5-pro', version: 'v1beta' },
       { name: 'gemini-3.0-flash', version: 'v1beta' },
       { name: 'gemini-2.0-flash', version: 'v1beta' },
       { name: 'gemini-1.5-flash', version: 'v1' }
