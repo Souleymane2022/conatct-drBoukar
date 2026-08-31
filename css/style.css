@@ -1330,3 +1330,84 @@ a.value:hover {
   box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
 }
 
+
+/* ==============================
+   Import groupé (plusieurs cartes)
+   ============================== */
+.batch-progress-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 30px;
+  text-align: center;
+  gap: 14px;
+}
+
+.batch-progress-content p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.batch-file-list {
+  list-style: none;
+  width: 100%;
+  max-width: 550px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-primary);
+}
+
+.batch-file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.batch-file-item:last-child {
+  border-bottom: none;
+}
+
+.batch-file-item .status-icon {
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
+.batch-file-item .status-icon.pending { color: var(--text-secondary); }
+.batch-file-item .status-icon.processing { color: var(--accent-cyan); }
+.batch-file-item .status-icon.success { color: var(--success); }
+.batch-file-item .status-icon.error { color: var(--danger); }
+
+.batch-file-item .batch-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary, #fff);
+}
+
+.batch-file-item .batch-file-status {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+#batch-done-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+}

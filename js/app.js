@@ -50,6 +50,15 @@ const DOM = {
   ocrStatusText: document.getElementById('ocr-status-text'),
   ocrProgressFill: document.getElementById('ocr-progress-fill'),
   ocrProgressPercent: document.getElementById('ocr-progress-percent'),
+
+  // Batch Import (plusieurs fichiers)
+  stepBatchProgress: document.getElementById('step-batch-progress'),
+  batchStatusText: document.getElementById('batch-status-text'),
+  batchProgressFill: document.getElementById('batch-progress-fill'),
+  batchProgressPercent: document.getElementById('batch-progress-percent'),
+  batchFileList: document.getElementById('batch-file-list'),
+  batchDoneActions: document.getElementById('batch-done-actions'),
+  btnBatchDone: document.getElementById('btn-batch-done'),
   
   // Review Form
   documentPreviewContainer: document.getElementById('document-preview-container'),
@@ -391,15 +400,26 @@ function initEventListeners() {
   DOM.dropZone.addEventListener('drop', (e) => {
     const dt = e.dataTransfer;
     const files = dt.files;
-    if (files.length > 0) {
+    if (files.length > 1) {
+      handleMultipleFiles(files);
+    } else if (files.length === 1) {
       handleFileInput(files[0]);
     }
   });
 
   DOM.fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-      handleFileInput(e.target.files[0]);
+    const files = e.target.files;
+    if (files.length > 1) {
+      handleMultipleFiles(files);
+    } else if (files.length === 1) {
+      handleFileInput(files[0]);
     }
+  });
+
+  // Bouton de fin d'import groupé
+  DOM.btnBatchDone.addEventListener('click', async () => {
+    closeUploadModal();
+    await loadDashboardData();
   });
 
   // Coller texte brut
@@ -509,8 +529,11 @@ function resetUploadModalSteps() {
   
   DOM.stepUpload.classList.add('active');
   DOM.stepOcrProgress.classList.remove('active');
+  DOM.stepBatchProgress.classList.remove('active');
   DOM.stepReview.classList.remove('active');
   DOM.documentPreviewContainer.innerHTML = '';
+  DOM.batchFileList.innerHTML = '';
+  DOM.batchDoneActions.style.display = 'none';
 }
 
 // Analyser un fichier téléversé (Image ou PDF)
@@ -661,6 +684,243 @@ async function handleFileInput(file) {
         </div>
       `;
     }
+  }
+}
+
+// ==============================
+// IMPORT GROUPÉ (plusieurs cartes)
+// ==============================
+
+// Traiter plusieurs fichiers d'un coup : lecture + insertion automatique en base
+async function handleMultipleFiles(fileList) {
+  const allFiles = Array.from(fileList);
+  const validFiles = allFiles.filter(f => f.type.startsWith('image/') || f.type === 'application/pdf');
+  const rejectedCount = allFiles.length - validFiles.length;
+
+  if (validFiles.length === 0) {
+    showToast("Aucun fichier valide. Sélectionnez des images ou des PDF.", "error");
+    return;
+  }
+
+  if (rejectedCount > 0) {
+    showToast(`${rejectedCount} fichier(s) ignoré(s) : format non supporté.`, "info");
+  }
+
+  // Activer l'étape de progression groupée
+  DOM.stepUpload.classList.remove('active');
+  DOM.stepOcrProgress.classList.remove('active');
+  DOM.stepReview.classList.remove('active');
+  DOM.stepBatchProgress.classList.add('active');
+  DOM.batchDoneActions.style.display = 'none';
+  DOM.batchStatusText.innerHTML = `<i class="fa-solid fa-layer-group"></i> Importation de ${validFiles.length} carte(s)...`;
+
+  // Construire la liste visuelle des fichiers
+  DOM.batchFileList.innerHTML = '';
+  const listItems = validFiles.map(file => {
+    const li = document.createElement('li');
+    li.className = 'batch-file-item';
+    li.innerHTML = `
+      <i class="fa-solid fa-hourglass-half status-icon pending"></i>
+      <span class="batch-file-name">${escapeHTML(file.name)}</span>
+      <span class="batch-file-status">En attente...</span>
+    `;
+    DOM.batchFileList.appendChild(li);
+    return li;
+  });
+
+  const setItemStatus = (li, statusClass, iconClass, text) => {
+    const icon = li.querySelector('.status-icon');
+    icon.className = `fa-solid ${iconClass} status-icon ${statusClass}`;
+    li.querySelector('.batch-file-status').textContent = text;
+  };
+
+  const updateBatchProgress = (done) => {
+    const percent = Math.round((done / validFiles.length) * 100);
+    DOM.batchProgressFill.style.width = `${percent}%`;
+    DOM.batchProgressPercent.textContent = `${done} / ${validFiles.length}`;
+  };
+
+  updateBatchProgress(0);
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  // Traiter les fichiers un par un (séquentiel pour ne pas saturer le serveur ni l'OCR)
+  for (let i = 0; i < validFiles.length; i++) {
+    const file = validFiles[i];
+    const li = listItems[i];
+    li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    setItemStatus(li, 'processing', 'fa-spinner fa-spin', 'Analyse en cours...');
+
+    try {
+      const { data, fileToSave } = await extractCardDataFromFile(file, (status) => {
+        li.querySelector('.batch-file-status').textContent = status;
+      });
+
+      setItemStatus(li, 'processing', 'fa-spinner fa-spin', 'Enregistrement...');
+      await saveBatchCard(data, fileToSave);
+
+      successCount++;
+      setItemStatus(li, 'success', 'fa-circle-check', data.name || 'Enregistrée');
+    } catch (err) {
+      console.error(`Échec de l'import du fichier "${file.name}":`, err);
+      errorCount++;
+      setItemStatus(li, 'error', 'fa-circle-exclamation', err.message || "Échec de l'import");
+    }
+
+    updateBatchProgress(i + 1);
+  }
+
+  // Résumé final
+  DOM.batchStatusText.innerHTML = `<i class="fa-solid fa-flag-checkered"></i> Import terminé : ${successCount} réussie(s), ${errorCount} échec(s)`;
+  DOM.batchDoneActions.style.display = 'flex';
+
+  if (successCount > 0) {
+    showToast(`${successCount} carte(s) de visite ajoutée(s) avec succès !`);
+  }
+  if (errorCount > 0) {
+    showToast(`${errorCount} fichier(s) n'ont pas pu être importés.`, "error");
+  }
+
+  // Rafraîchir le tableau de bord en arrière-plan
+  await loadDashboardData();
+}
+
+// Extraire les données d'une carte depuis un fichier (Gemini si dispo, sinon OCR local)
+// Retourne { data, fileToSave } où fileToSave est le fichier (compressé si image) à joindre à la carte
+async function extractCardDataFromFile(file, onStatus) {
+  const isImage = file.type.startsWith('image/');
+  const isPdf = file.type === 'application/pdf';
+
+  let fileToSave = file;
+  if (isImage) {
+    try {
+      fileToSave = await compressImage(file, 800, 0.7);
+    } catch (compressErr) {
+      console.warn("Échec de compression, utilisation de l'original:", compressErr);
+    }
+  }
+
+  // 1. Tenter l'analyse intelligente Gemini via le backend
+  if (!state.useLocalStorage) {
+    try {
+      onStatus('Analyse IA (Gemini)...');
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${API_URL}/api/cards/analyze`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: formData
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result && !result.useFallback && result.data) {
+          const data = result.data;
+          data.tags = data.tags || 'Import IA';
+          if (!data.name || !data.name.trim()) {
+            data.name = file.name.replace(/\.[^/.]+$/, '');
+          }
+          return { data, fileToSave };
+        }
+      }
+      // Sinon on tombe silencieusement sur l'OCR local ci-dessous
+    } catch (err) {
+      console.warn(`Analyse Gemini échouée pour "${file.name}", fallback OCR local:`, err);
+    }
+  }
+
+  // 2. Fallback : OCR local (Tesseract / PDF.js)
+  // En cas d'échec de l'OCR, on insère quand même la carte avec le nom du fichier
+  let extractedText = '';
+  try {
+    if (isImage) {
+      extractedText = await OCR.extractTextFromImage(file, (status, progress) => {
+        onStatus(`${status} (${Math.round(progress * 100)}%)`);
+      });
+    } else if (isPdf) {
+      const res = await OCR.extractTextFromPdf(file, (status, progress) => {
+        onStatus(`${status} (${Math.round(progress * 100)}%)`);
+      });
+      extractedText = res.text;
+    }
+  } catch (ocrErr) {
+    console.warn(`OCR local échoué pour "${file.name}", la carte sera enregistrée sans texte extrait:`, ocrErr);
+  }
+
+  const data = OCR.parseContactInfo(extractedText);
+  data.tags = data.tags || 'Import OCR';
+  if (!data.name || !data.name.trim()) {
+    // Utiliser le nom du fichier comme nom par défaut pour ne jamais bloquer l'insertion
+    data.name = file.name.replace(/\.[^/.]+$/, '');
+  }
+
+  return { data, fileToSave };
+}
+
+// Enregistrer une carte issue de l'import groupé (API ou LocalStorage)
+async function saveBatchCard(data, file) {
+  if (state.useLocalStorage) {
+    const storedCards = localStorage.getItem('cardvault_cards');
+    const cards = storedCards ? JSON.parse(storedCards) : [];
+
+    let fileData = '';
+    let fileType = '';
+    if (file) {
+      fileType = file.type;
+      if (file.type.startsWith('image/')) {
+        try {
+          fileData = await fileToBase64(file);
+        } catch (err) {
+          console.error("Impossible de convertir le fichier en Base64:", err);
+        }
+      }
+    }
+
+    cards.unshift({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      name: (data.name || '').trim(),
+      company: (data.company || '').trim(),
+      job_title: (data.job_title || '').trim(),
+      phone: (data.phone || '').trim(),
+      email: (data.email || '').trim(),
+      website: (data.website || '').trim(),
+      address: (data.address || '').trim(),
+      tags: (data.tags || '').trim(),
+      raw_text: data.raw_text || '',
+      file_path: fileData,
+      file_type: fileType,
+      created_at: new Date().toISOString()
+    });
+
+    localStorage.setItem('cardvault_cards', JSON.stringify(cards));
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('name', (data.name || '').trim());
+  formData.append('company', (data.company || '').trim());
+  formData.append('job_title', (data.job_title || '').trim());
+  formData.append('phone', (data.phone || '').trim());
+  formData.append('email', (data.email || '').trim());
+  formData.append('website', (data.website || '').trim());
+  formData.append('address', (data.address || '').trim());
+  formData.append('tags', (data.tags || '').trim());
+  formData.append('raw_text', data.raw_text || '');
+
+  if (file) {
+    formData.append('file', file);
+  }
+
+  const response = await fetch(`${API_URL}/api/cards`, {
+    method: 'POST',
+    body: formData,
+    headers: getAuthHeaders()
+  });
+
+  if (!response.ok) {
+    throw new Error("Erreur d'enregistrement sur le serveur.");
   }
 }
 
