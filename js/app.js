@@ -571,7 +571,6 @@ async function handleFileInput(file) {
   state.uploadedFile = fileToProcess;
   
   // Préparer l'affichage de l'image locale immédiatement pour l'aperçu
-  let canvas = null;
   if (isImage) {
     const imageUrl = URL.createObjectURL(fileToProcess);
     const img = document.createElement('img');
@@ -580,116 +579,81 @@ async function handleFileInput(file) {
     DOM.documentPreviewContainer.appendChild(img);
   }
 
-  // Tenter l'analyse intelligente avec l'API Gemini via le backend si on n'est pas en localStorage
-  if (!state.useLocalStorage) {
-    try {
-      updateOcrProgress("Analyse de la mise en page (Gemini AI)...", 0.3);
-
-      const formData = new FormData();
-      // Envoyer la version haute résolution (1600px) : assez nette pour bien lire
-      // les textes, mais toujours sous la limite de 4.5 Mo de Vercel
-      formData.append('file', fileForAnalysis);
-
-      const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: formData
-      }, 45000);
-      
-      if (response.ok) {
-        const result = await response.json();
-        if (result && !result.useFallback) {
-          // Gemini a extrait avec succès les données structurées !
-          updateOcrProgress("Analyse terminée avec succès !", 1.0);
-          showReviewStepWithData(result.data);
-          
-          // Si c'est un PDF, faire quand même le rendu canvas pour l'aperçu
-          if (isPdf) {
-            try {
-              const arrayBuffer = await file.arrayBuffer();
-              const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-              const page = await pdf.getPage(1);
-              const viewport = page.getViewport({ scale: 1.5 });
-              canvas = document.createElement('canvas');
-              const context = canvas.getContext('2d');
-              canvas.height = viewport.height;
-              canvas.width = viewport.width;
-              await page.render({ canvasContext: context, viewport: viewport }).promise;
-              state.ocrCanvas = canvas;
-              DOM.documentPreviewContainer.innerHTML = '';
-              DOM.documentPreviewContainer.appendChild(canvas);
-            } catch (pdfErr) {
-              console.warn("Échec du rendu du PDF pour l'aperçu:", pdfErr);
-              DOM.documentPreviewContainer.innerHTML = '<div style="font-size: 3rem; color: var(--text-muted);"><i class="fa-solid fa-file-pdf"></i></div>';
-            }
-          }
-          return; // Succès Gemini, on s'arrête ici !
-        } else {
-          // Si le serveur dit d'utiliser le fallback
-          console.warn("Le serveur a demandé d'utiliser le fallback:", result.error || result.message);
-          let errMsg = result.error || result.message || "Clé d'API manquante";
-          if (result.availableModels && result.availableModels.length > 0) {
-            errMsg += " (Dispo: " + result.availableModels.slice(0, 3).join(', ') + ")";
-          }
-          showToast("Gemini indisponible (" + errMsg + "). Utilisation du lecteur local.", "info");
-        }
-      } else {
-        showToast("Erreur serveur d'analyse (" + response.status + "). Utilisation du lecteur local.", "error");
-      }
-    } catch (err) {
-      console.warn("L'analyse intelligente Gemini a échoué, passage au fallback local Tesseract:", err);
-      showToast("Impossible de joindre le serveur d'analyse. Utilisation du lecteur local.", "info");
-    }
+  // Mode statique (sans serveur) : pas d'analyse Gemini possible, saisie manuelle
+  if (state.useLocalStorage) {
+    showToast("Analyse IA indisponible en mode statique. Remplissez le formulaire manuellement.", "info");
+    if (isPdf) await renderPdfPreview(file);
+    showReviewStep("");
+    return;
   }
 
-  // Fallback : OCR Tesseract classique (local)
+  // Analyse Gemini : la seule méthode de lecture automatique
+  let geminiError = "Le serveur d'analyse n'a pas répondu.";
   try {
-    let extractedText = '';
-    updateOcrProgress("Initialisation de l'OCR local...", 0.1);
+    updateOcrProgress("Analyse de la carte (Gemini AI)...", 0.3);
 
-    if (isImage) {
-      extractedText = await OCR.extractTextFromImage(file, (status, progress) => {
-        updateOcrProgress(status, progress);
-      });
-    } else if (isPdf) {
-      // PDF Hybride
-      const res = await OCR.extractTextFromPdf(file, (status, progress) => {
-        updateOcrProgress(status, progress);
-      });
-      extractedText = res.text;
-      canvas = res.canvas;
-      state.ocrCanvas = canvas;
+    const formData = new FormData();
+    // Envoyer la version haute résolution (1600px) : assez nette pour bien lire
+    // les textes, mais toujours sous la limite de 4.5 Mo de Vercel
+    formData.append('file', fileForAnalysis);
 
-      DOM.documentPreviewContainer.innerHTML = '';
-      if (canvas) {
-        DOM.documentPreviewContainer.appendChild(canvas);
-      } else {
-        DOM.documentPreviewContainer.innerHTML = '<div style="font-size: 3rem; color: var(--text-muted);"><i class="fa-solid fa-file-pdf"></i></div>';
+    const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData
+    }, 45000);
+
+    if (response.ok) {
+      const result = await response.json();
+      if (result && !result.useFallback) {
+        // Gemini a extrait avec succès les données structurées !
+        updateOcrProgress("Analyse terminée avec succès !", 1.0);
+        showReviewStepWithData(result.data);
+
+        // Si c'est un PDF, faire le rendu canvas pour l'aperçu
+        if (isPdf) await renderPdfPreview(file);
+        return; // Succès Gemini, on s'arrête ici !
       }
+      // Le serveur n'a pas pu utiliser Gemini : récupérer la raison exacte
+      geminiError = result.error || result.message || "Clé GEMINI_API_KEY non configurée sur le serveur.";
+      if (result.availableModels && result.availableModels.length > 0) {
+        geminiError += " (Modèles disponibles : " + result.availableModels.slice(0, 3).join(', ') + ")";
+      }
+    } else {
+      geminiError = "Erreur du serveur d'analyse (" + response.status + ").";
     }
+  } catch (err) {
+    console.error("L'analyse Gemini a échoué:", err);
+    geminiError = err.name === 'AbortError'
+      ? "L'analyse a dépassé le délai maximum (45s)."
+      : "Impossible de joindre le serveur d'analyse.";
+  }
 
-    // Passer à la phase révision
-    showReviewStep(extractedText);
+  // Échec Gemini : aucune lecture automatique — saisie manuelle avec message clair
+  console.warn("Analyse Gemini indisponible:", geminiError);
+  showToast("Lecture IA impossible : " + geminiError, "error");
+  if (isPdf) await renderPdfPreview(file);
+  showReviewStep("");
+}
 
-  } catch (error) {
-    console.error("Erreur durant l'extraction OCR:", error);
-    showToast("Reconnaissance automatique (OCR) indisponible. Saisie manuelle activée.", "error");
-    
-    // Passer quand même à l'étape de révision avec un texte vide
-    showReviewStep("");
-    
-    // Afficher un message d'avertissement dans le conteneur de prévisualisation (sauf si image déjà visible)
-    if (!isImage) {
-      DOM.documentPreviewContainer.innerHTML = `
-        <div style="text-align: center; color: var(--warning); padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px;">
-          <i class="fa-solid fa-triangle-exclamation" style="font-size: 3rem; color: var(--warning);"></i>
-          <h4 style="margin: 0; color: var(--text-primary);">L'OCR n'a pas pu s'initialiser</h4>
-          <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0; max-width: 250px;">
-            Vous êtes peut-être hors-ligne. Vous pouvez remplir le formulaire à droite et enregistrer le fichier original.
-          </p>
-        </div>
-      `;
-    }
+// Rendre la première page d'un PDF dans le panneau d'aperçu
+async function renderPdfPreview(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    await page.render({ canvasContext: context, viewport: viewport }).promise;
+    state.ocrCanvas = canvas;
+    DOM.documentPreviewContainer.innerHTML = '';
+    DOM.documentPreviewContainer.appendChild(canvas);
+  } catch (pdfErr) {
+    console.warn("Échec du rendu du PDF pour l'aperçu:", pdfErr);
+    DOM.documentPreviewContainer.innerHTML = '<div style="font-size: 3rem; color: var(--text-muted);"><i class="fa-solid fa-file-pdf"></i></div>';
   }
 }
 
@@ -705,6 +669,12 @@ async function handleMultipleFiles(fileList) {
 
   if (validFiles.length === 0) {
     showToast("Aucun fichier valide. Sélectionnez des images ou des PDF.", "error");
+    return;
+  }
+
+  // L'import groupé lit les cartes avec Gemini : impossible sans le serveur
+  if (state.useLocalStorage) {
+    showToast("Import groupé indisponible en mode statique : l'analyse IA nécessite le serveur. Ajoutez les cartes une par une.", "error");
     return;
   }
 
@@ -752,14 +722,6 @@ async function handleMultipleFiles(fileList) {
   let errorCount = 0;
   let completedCount = 0;
 
-  // L'OCR local (Tesseract) ne traite qu'une image à la fois : verrou d'exclusion
-  let ocrChain = Promise.resolve();
-  const withOcrLock = (fn) => {
-    const run = ocrChain.then(fn, fn);
-    ocrChain = run.then(() => {}, () => {});
-    return run;
-  };
-
   const processFileAt = async (i) => {
     const file = validFiles[i];
     const li = listItems[i];
@@ -768,7 +730,7 @@ async function handleMultipleFiles(fileList) {
     try {
       const { data, fileToSave } = await extractCardDataFromFile(file, (status) => {
         li.querySelector('.batch-file-status').textContent = status;
-      }, withOcrLock);
+      });
 
       setItemStatus(li, 'processing', 'fa-spinner fa-spin', 'Enregistrement...');
       await saveBatchCard(data, fileToSave);
@@ -796,13 +758,6 @@ async function handleMultipleFiles(fileList) {
   });
   await Promise.all(runners);
 
-  // Libérer le moteur OCR partagé s'il a été utilisé
-  try {
-    await OCR.releaseSharedWorker();
-  } catch (e) {
-    console.warn("Erreur lors de la libération du moteur OCR:", e);
-  }
-
   // Résumé final
   DOM.batchStatusText.innerHTML = `<i class="fa-solid fa-flag-checkered"></i> Import terminé : ${successCount} réussie(s), ${errorCount} échec(s)`;
   DOM.batchDoneActions.style.display = 'flex';
@@ -818,11 +773,10 @@ async function handleMultipleFiles(fileList) {
   await loadDashboardData();
 }
 
-// Extraire les données d'une carte depuis un fichier (Gemini si dispo, sinon OCR local)
-// Retourne { data, fileToSave } où fileToSave est le fichier (compressé si image) à joindre à la carte
-async function extractCardDataFromFile(file, onStatus, ocrLock = null) {
+// Extraire les données d'une carte via Gemini (seule méthode de lecture)
+// Retourne { data, fileToSave } — lève une erreur claire si Gemini ne peut pas lire
+async function extractCardDataFromFile(file, onStatus) {
   const isImage = file.type.startsWith('image/');
-  const isPdf = file.type === 'application/pdf';
 
   let fileToSave = file;
   let fileForAnalysis = file;
@@ -837,70 +791,43 @@ async function extractCardDataFromFile(file, onStatus, ocrLock = null) {
     }
   }
 
-  // 1. Tenter l'analyse intelligente Gemini via le backend
-  if (!state.useLocalStorage) {
-    try {
-      onStatus('Analyse IA (Gemini)...');
-      const formData = new FormData();
-      // Envoyer la version haute résolution (1600px) : assez nette pour bien lire
-      // les textes, mais toujours sous la limite de 4.5 Mo de Vercel
-      formData.append('file', fileForAnalysis);
+  onStatus('Analyse IA (Gemini)...');
 
-      const response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: formData
-      }, 45000);
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result && !result.useFallback && result.data) {
-          const data = result.data;
-          data.tags = data.tags || 'Import IA';
-          if (!data.name || !data.name.trim()) {
-            data.name = file.name.replace(/\.[^/.]+$/, '');
-          }
-          return { data, fileToSave };
-        }
-      }
-      // Sinon on tombe silencieusement sur l'OCR local ci-dessous
-    } catch (err) {
-      console.warn(`Analyse Gemini échouée pour "${file.name}", fallback OCR local:`, err);
-    }
-  }
-
-  // 2. Fallback : OCR local (Tesseract / PDF.js) avec moteur partagé et verrou d'exclusion
-  // En cas d'échec de l'OCR, on insère quand même la carte avec le nom du fichier
-  const runOcr = async () => {
-    if (isImage) {
-      // OCR sur la version haute résolution : meilleure lecture des petits textes
-      return await OCR.extractTextFromImage(fileForAnalysis, (status, progress) => {
-        onStatus(`${status} (${Math.round(progress * 100)}%)`);
-      }, true);
-    } else if (isPdf) {
-      const res = await OCR.extractTextFromPdf(file, (status, progress) => {
-        onStatus(`${status} (${Math.round(progress * 100)}%)`);
-      }, null, true);
-      return res.text;
-    }
-    return '';
-  };
-
-  let extractedText = '';
+  let response;
   try {
-    onStatus('En attente du lecteur OCR local...');
-    extractedText = ocrLock ? await ocrLock(runOcr) : await runOcr();
-  } catch (ocrErr) {
-    console.warn(`OCR local échoué pour "${file.name}", la carte sera enregistrée sans texte extrait:`, ocrErr);
+    const formData = new FormData();
+    // Envoyer la version haute résolution (1600px) : assez nette pour bien lire
+    // les textes, mais toujours sous la limite de 4.5 Mo de Vercel
+    formData.append('file', fileForAnalysis);
+
+    response = await fetchWithTimeout(`${API_URL}/api/cards/analyze`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData
+    }, 45000);
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error("Analyse trop longue (délai de 45s dépassé).");
+    }
+    throw new Error("Serveur d'analyse injoignable.");
   }
 
-  const data = OCR.parseContactInfo(extractedText);
-  data.tags = data.tags || 'Import OCR';
+  if (!response.ok) {
+    throw new Error(`Erreur du serveur d'analyse (${response.status}).`);
+  }
+
+  const result = await response.json();
+  if (!result || result.useFallback || !result.data) {
+    // Le serveur n'a pas pu utiliser Gemini : remonter la raison exacte
+    const reason = (result && (result.error || result.message)) || "Clé GEMINI_API_KEY non configurée sur le serveur.";
+    throw new Error("Gemini indisponible : " + reason);
+  }
+
+  const data = result.data;
+  data.tags = data.tags || 'Import IA';
   if (!data.name || !data.name.trim()) {
-    // Utiliser le nom du fichier comme nom par défaut pour ne jamais bloquer l'insertion
     data.name = file.name.replace(/\.[^/.]+$/, '');
   }
-
   return { data, fileToSave };
 }
 

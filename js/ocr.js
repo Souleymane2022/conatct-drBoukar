@@ -4,165 +4,10 @@ if (typeof window !== 'undefined' && window.pdfjsLib) {
 }
 
 /**
- * Moteur OCR et Analyse de Contacts locaux
+ * Analyse de texte de contacts (utilisée pour l'option "Coller du texte brut").
+ * La lecture des images/PDF est faite exclusivement par Gemini via le backend.
  */
 const OCR = {
-
-  // Moteur Tesseract partagé (réutilisé lors d'un import groupé pour éviter
-  // de réinitialiser le moteur et re-télécharger la langue à chaque fichier)
-  _sharedWorker: null,
-  _sharedProgressCb: null,
-
-  async getSharedWorker() {
-    if (!window.Tesseract) {
-      throw new Error("La bibliothèque Tesseract.js n'est pas chargée.");
-    }
-    if (this._sharedWorker) return this._sharedWorker;
-
-    const worker = await Tesseract.createWorker({
-      logger: m => {
-        if (this._sharedProgressCb && m.status === 'recognizing text') {
-          this._sharedProgressCb(`Reconnaissance de texte : ${Math.round(m.progress * 100)}%`, m.progress * 0.8 + 0.15);
-        }
-      }
-    });
-    await worker.loadLanguage('fra+eng');
-    await worker.initialize('fra+eng');
-    this._sharedWorker = worker;
-    return worker;
-  },
-
-  async releaseSharedWorker() {
-    if (this._sharedWorker) {
-      try {
-        await this._sharedWorker.terminate();
-      } catch (e) {
-        console.warn("Impossible de terminer le moteur OCR partagé:", e);
-      }
-      this._sharedWorker = null;
-      this._sharedProgressCb = null;
-    }
-  },
-
-  /**
-   * Effectue l'OCR sur un fichier Image
-   * @param {File|Blob|HTMLCanvasElement} imageSource - Image à analyser
-   * @param {Function} progressCallback - Callback(status, progress)
-   * @param {boolean} useSharedWorker - Réutiliser le moteur partagé (import groupé)
-   * @returns {Promise<string>} - Texte extrait
-   */
-  async extractTextFromImage(imageSource, progressCallback, useSharedWorker = false) {
-    if (!window.Tesseract) {
-      throw new Error("La bibliothèque Tesseract.js n'est pas chargée.");
-    }
-
-    if (useSharedWorker) {
-      try {
-        progressCallback('Préparation du moteur OCR...', 0.1);
-        const worker = await this.getSharedWorker();
-        this._sharedProgressCb = progressCallback;
-        progressCallback('Extraction du texte...', 0.2);
-        const { data: { text } } = await worker.recognize(imageSource);
-        this._sharedProgressCb = null;
-        progressCallback('Terminé', 1.0);
-        return text;
-      } catch (error) {
-        this._sharedProgressCb = null;
-        console.error("Erreur OCR Tesseract (moteur partagé):", error);
-        throw new Error("Échec de la reconnaissance de texte sur l'image.");
-      }
-    }
-
-    try {
-      progressCallback('Initialisation de Tesseract...', 0.1);
-
-      const worker = await Tesseract.createWorker({
-        logger: m => {
-          if (m.status === 'recognizing text') {
-            progressCallback(`Reconnaissance de texte : ${Math.round(m.progress * 100)}%`, m.progress * 0.8 + 0.15);
-          } else {
-            progressCallback(m.status, 0.1);
-          }
-        }
-      });
-
-      // Français + anglais : les cartes mélangent souvent les deux langues
-      await worker.loadLanguage('fra+eng');
-      await worker.initialize('fra+eng');
-
-      progressCallback('Extraction du texte...', 0.9);
-      const { data: { text } } = await worker.recognize(imageSource);
-
-      await worker.terminate();
-      progressCallback('Terminé', 1.0);
-      return text;
-    } catch (error) {
-      console.error("Erreur OCR Tesseract:", error);
-      throw new Error("Échec de la reconnaissance de texte sur l'image.");
-    }
-  },
-
-  /**
-   * Effectue l'OCR ou l'extraction de texte sur un fichier PDF (hybride)
-   * @param {File} pdfFile - Fichier PDF à analyser
-   * @param {Function} progressCallback - Callback(status, progress)
-   * @param {HTMLDivElement} canvasContainer - Optionnel, pour rendre la page
-   * @param {boolean} useSharedWorker - Réutiliser le moteur OCR partagé (import groupé)
-   * @returns {Promise<{text: string, canvas: HTMLCanvasElement|null}>}
-   */
-  async extractTextFromPdf(pdfFile, progressCallback, canvasContainer = null, useSharedWorker = false) {
-    if (!window.pdfjsLib) {
-      throw new Error("La bibliothèque PDF.js n'est pas chargée.");
-    }
-
-    try {
-      progressCallback('Chargement du PDF...', 0.1);
-      const arrayBuffer = await pdfFile.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      
-      if (pdf.numPages === 0) {
-        throw new Error("Le PDF ne contient aucune page.");
-      }
-
-      // Analyser la première page (suffisant pour une carte de visite)
-      progressCallback('Lecture de la page 1...', 0.2);
-      const page = await pdf.getPage(1);
-      
-      // Essayer d'extraire le texte directement (si c'est un PDF vectoriel contenant du texte)
-      const textContent = await page.getTextContent();
-      let extractedText = textContent.items.map(item => item.str).join(' ');
-      
-      // Créer le rendu de la page dans un canvas pour prévisualisation et OCR alternatif
-      const viewport = page.getViewport({ scale: 1.5 });
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      
-      progressCallback('Rendu visuel de la page...', 0.3);
-      await page.render({ canvasContext: context, viewport: viewport }).promise;
-      
-      // Si l'extraction de texte direct est très vide, faire de l'OCR sur le canvas rendu
-      if (extractedText.trim().length < 15) {
-        progressCallback('Le PDF semble être une image. Lancement de l\'OCR local...', 0.4);
-        extractedText = await this.extractTextFromImage(canvas, (status, val) => {
-          // Ajuster la progression (de 0.4 à 0.95)
-          const adjustedProgress = 0.4 + (val * 0.55);
-          progressCallback(status, adjustedProgress);
-        }, useSharedWorker);
-      } else {
-        progressCallback('Texte extrait directement avec succès !', 1.0);
-      }
-
-      return {
-        text: extractedText,
-        canvas: canvas
-      };
-    } catch (error) {
-      console.error("Erreur extraction PDF:", error);
-      throw new Error("Échec de la lecture ou de l'OCR sur le fichier PDF.");
-    }
-  },
 
   /**
    * Analyse le texte brut d'une carte de visite pour en extraire les entités
@@ -178,7 +23,7 @@ const OCR = {
       email: '',
       website: '',
       address: '',
-      tags: 'Import OCR',
+      tags: 'Texte collé',
       raw_text: text
     };
 
